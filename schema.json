@@ -14,7 +14,9 @@
           "description": "Optional session identifier. Defaults to 'default'"
         }
       },
-      "required": ["path"],
+      "required": [
+        "path"
+      ],
       "additionalProperties": false
     }
   },
@@ -26,7 +28,7 @@
       "properties": {
         "path": {
           "type": "string",
-          "description": "Directory path to list (absolute or relative to session context)"
+          "description": "Directory path or glob pattern (absolute, relative to session context, or with wildcards like 'src/**/*.rs')"
         },
         "session_id": {
           "type": "string",
@@ -35,13 +37,11 @@
         "include_gitignore": {
           "type": "boolean",
           "description": "Include files normally ignored by gitignore. Defaults to false"
-        },
-        "pattern": {
-          "type": "string",
-          "description": "Optional glob pattern to filter results (e.g., '*.rs', 'src/**/*.ts'). Respects gitignore rules."
         }
       },
-      "required": ["path"],
+      "required": [
+        "path"
+      ],
       "additionalProperties": false
     }
   }

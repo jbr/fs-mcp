@@ -59,31 +59,16 @@ impl FsTools {
         path_str: &str,
         session_id: Option<&str>,
         include_gitignore: bool,
-        pattern: Option<&str>,
     ) -> Result<Vec<String>> {
         let session_id = session_id.unwrap_or("default");
 
-        // Resolve path relative to session context if needed
-        let path = if path_str.starts_with('/') || path_str.starts_with("C:\\") {
-            // Absolute path
-            PathBuf::from(path_str)
-        } else {
-            // Relative path - use session context
-            match self.get_context(Some(session_id))? {
-                Some(context) => context.join(path_str),
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "No context set for session '{}'. Use set_context first or provide an absolute path.",
-                        session_id
-                    ));
-                }
-            }
-        };
+        // Parse path to separate directory from glob pattern
+        let (base_path, pattern) = self.parse_path_and_pattern(path_str, session_id)?;
 
-        if !path.is_dir() {
+        if !base_path.is_dir() {
             return Err(anyhow::anyhow!(
                 "Path is not a directory: {}",
-                path.display()
+                base_path.display()
             ));
         }
 
@@ -91,14 +76,14 @@ impl FsTools {
 
         // Compile glob pattern if provided
         let glob_pattern = if let Some(pattern_str) = pattern {
-            Some(Pattern::new(pattern_str)?)
+            Some(Pattern::new(&pattern_str)?)
         } else {
             None
         };
 
         // Use ignore crate's WalkBuilder for proper gitignore support
         // Use ignore crate's WalkBuilder for proper gitignore support
-        let mut walker = WalkBuilder::new(&path);
+        let mut walker = WalkBuilder::new(&base_path);
         walker.max_depth(Some(1)); // Only list direct children, not recursive
         walker.hidden(!include_gitignore); // Respect hidden file settings
         walker.git_ignore(!include_gitignore); // Respect .gitignore unless overridden
@@ -125,7 +110,7 @@ impl FsTools {
             match result {
                 Ok(entry) => {
                     // Skip the root directory itself
-                    if entry.path() == path {
+                    if entry.path() == base_path {
                         continue;
                     }
 
@@ -148,5 +133,63 @@ impl FsTools {
 
         entries.sort();
         Ok(entries)
+    }
+
+    /// Parse a path string that might contain glob patterns
+    /// Returns (base_directory_path, optional_pattern)
+    fn parse_path_and_pattern(
+        &self,
+        path_str: &str,
+        session_id: &str,
+    ) -> Result<(PathBuf, Option<String>)> {
+        // Check if path contains glob patterns
+        if path_str.contains('*') || path_str.contains('?') || path_str.contains('[') {
+            // Extract the directory part (everything before the first glob character)
+            let mut split_pos = None;
+            for (i, char) in path_str.char_indices() {
+                if char == '*' || char == '?' || char == '[' {
+                    // Find the last path separator before this position
+                    if let Some(sep_pos) = path_str[..i].rfind('/') {
+                        split_pos = Some(sep_pos);
+                    } else if let Some(sep_pos) = path_str[..i].rfind('\\') {
+                        split_pos = Some(sep_pos);
+                    }
+                    break;
+                }
+            }
+
+            let (dir_part, pattern_part) = if let Some(pos) = split_pos {
+                (&path_str[..pos], &path_str[pos + 1..])
+            } else {
+                // Pattern starts from the beginning, use current directory
+                (".", path_str)
+            };
+
+            let base_path = self.resolve_path(dir_part, session_id)?;
+            Ok((base_path, Some(pattern_part.to_string())))
+        } else {
+            // No glob pattern, just a regular path
+            let base_path = self.resolve_path(path_str, session_id)?;
+            Ok((base_path, None))
+        }
+    }
+
+    /// Resolve a path relative to session context if needed
+    fn resolve_path(&self, path_str: &str, session_id: &str) -> Result<PathBuf> {
+        if path_str.starts_with('/') || path_str.starts_with("C:\\") {
+            // Absolute path
+            Ok(PathBuf::from(path_str))
+        } else {
+            // Relative path - use session context
+            match self.get_context(Some(session_id))? {
+                Some(context) => Ok(context.join(path_str)),
+                None => {
+                    Err(anyhow::anyhow!(
+                        "No context set for session '{}'. Use set_context first or provide an absolute path.",
+                        session_id
+                    ))
+                }
+            }
+        }
     }
 }
