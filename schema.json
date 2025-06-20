@@ -1,0 +1,44 @@
+[
+  {
+    "name": "set_context",
+    "description": "Set the working context path for a session",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Directory path to set as context"
+        },
+        "session_id": {
+          "type": "string",
+          "description": "Optional session identifier. Defaults to 'default'"
+        }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_directory",
+    "description": "List directory contents with session context support and gitignore awareness",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Directory path to list (absolute or relative to session context)"
+        },
+        "session_id": {
+          "type": "string",
+          "description": "Optional session identifier for context. Defaults to 'default'"
+        },
+        "include_gitignore": {
+          "type": "boolean",
+          "description": "Include files normally ignored by gitignore. Defaults to false"
+        }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    }
+  }
+]
