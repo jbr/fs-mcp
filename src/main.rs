@@ -160,7 +160,9 @@ fn list_directory(
     let path_str = arguments["path"].as_str().unwrap_or(".");
     let session_id = arguments["session_id"].as_str();
     let include_gitignore = arguments["include_gitignore"].as_bool().unwrap_or(false);
-    match fs_tools.list_directory(path_str, session_id, include_gitignore) {
+    let pattern = arguments["pattern"].as_str();
+
+    match fs_tools.list_directory(path_str, session_id, include_gitignore, pattern) {
         Ok(entries) => {
             let session_notice = if session_id.is_none() {
                 "\n[Session Notice: This operation used global state. Consider providing --session-id for better isolation and context management. See set_context for details.]"
@@ -168,8 +170,14 @@ fn list_directory(
                 ""
             };
 
+            let pattern_info = if pattern.is_some() {
+                format!(" (filtered by pattern: {})", pattern.unwrap())
+            } else {
+                String::new()
+            };
+
             let content = format!(
-                "Directory listing for {}:\n{}\n{}",
+                "Directory listing for {}{pattern_info}:\n{}\n{}",
                 path_str,
                 entries.join("\n"),
                 session_notice
@@ -193,7 +201,7 @@ fn list_directory(
             "id": id,
             "error": {
                 "code": -32000,
-                "message": format!("Failed to list directory: {}", e)
+                "message": format!("Failed to list directory: {e}")
             }
         })),
     }

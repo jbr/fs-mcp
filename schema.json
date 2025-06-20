@@ -35,6 +35,10 @@
         "include_gitignore": {
           "type": "boolean",
           "description": "Include files normally ignored by gitignore. Defaults to false"
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Optional glob pattern to filter results (e.g., '*.rs', 'src/**/*.ts'). Respects gitignore rules."
         }
       },
       "required": ["path"],

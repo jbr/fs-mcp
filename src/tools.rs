@@ -1,5 +1,6 @@
 use crate::session::SessionStore;
 use anyhow::Result;
+use glob::Pattern;
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -58,6 +59,7 @@ impl FsTools {
         path_str: &str,
         session_id: Option<&str>,
         include_gitignore: bool,
+        pattern: Option<&str>,
     ) -> Result<Vec<String>> {
         let session_id = session_id.unwrap_or("default");
 
@@ -87,14 +89,37 @@ impl FsTools {
 
         let mut entries = Vec::new();
 
+        // Compile glob pattern if provided
+        let glob_pattern = if let Some(pattern_str) = pattern {
+            Some(Pattern::new(pattern_str)?)
+        } else {
+            None
+        };
+
         // Use ignore crate's WalkBuilder for proper gitignore support
-        let walker = WalkBuilder::new(&path)
-            .max_depth(Some(1)) // Only list direct children, not recursive
-            .hidden(!include_gitignore) // Respect hidden file settings
-            .git_ignore(!include_gitignore) // Respect .gitignore unless overridden
-            .git_global(!include_gitignore) // Respect global gitignore
-            .git_exclude(!include_gitignore) // Respect .git/info/exclude
-            .build();
+        // Use ignore crate's WalkBuilder for proper gitignore support
+        let mut walker = WalkBuilder::new(&path);
+        walker.max_depth(Some(1)); // Only list direct children, not recursive
+        walker.hidden(!include_gitignore); // Respect hidden file settings
+        walker.git_ignore(!include_gitignore); // Respect .gitignore unless overridden
+        walker.git_global(!include_gitignore); // Respect global gitignore
+        walker.git_exclude(!include_gitignore); // Respect .git/info/exclude
+
+        // Add glob pattern filtering if provided
+        if let Some(ref pattern) = glob_pattern {
+            let pattern_clone = pattern.clone();
+            walker.filter_entry(move |entry| {
+                // Always allow directories to be traversed for pattern matching
+                if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                    return true;
+                }
+
+                // For files, check if they match the glob pattern
+                pattern_clone.matches_path(entry.path())
+            });
+        }
+
+        let walker = walker.build();
 
         for result in walker {
             match result {
@@ -106,7 +131,7 @@ impl FsTools {
 
                     let file_name = entry.file_name().to_string_lossy().to_string();
 
-                    let prefix = if entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                    let prefix = if entry.file_type().is_some_and(|ft| ft.is_dir()) {
                         "[DIR] "
                     } else {
                         "[FILE] "
