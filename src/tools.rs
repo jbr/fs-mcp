@@ -1,5 +1,6 @@
 use crate::session::SessionStore;
 use anyhow::Result;
+use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -51,7 +52,7 @@ impl FsTools {
         Ok(session_data.context_path)
     }
 
-    /// List directory contents with session context support
+    /// List directory contents with session context support and gitignore awareness
     pub fn list_directory(
         &self,
         path_str: &str,
@@ -77,10 +78,6 @@ impl FsTools {
             }
         };
 
-        // Basic directory listing for now
-        // TODO: Add gitignore support, glob patterns, etc.
-        let mut entries = Vec::new();
-
         if !path.is_dir() {
             return Err(anyhow::anyhow!(
                 "Path is not a directory: {}",
@@ -88,20 +85,40 @@ impl FsTools {
             ));
         }
 
-        for entry in std::fs::read_dir(&path)? {
-            let entry = entry?;
-            let file_name = entry.file_name().to_string_lossy().to_string();
+        let mut entries = Vec::new();
 
-            if !include_gitignore && file_name.starts_with('.') {
-                continue; // Skip hidden files for now
+        // Use ignore crate's WalkBuilder for proper gitignore support
+        let walker = WalkBuilder::new(&path)
+            .max_depth(Some(1)) // Only list direct children, not recursive
+            .hidden(!include_gitignore) // Respect hidden file settings
+            .git_ignore(!include_gitignore) // Respect .gitignore unless overridden
+            .git_global(!include_gitignore) // Respect global gitignore
+            .git_exclude(!include_gitignore) // Respect .git/info/exclude
+            .build();
+
+        for result in walker {
+            match result {
+                Ok(entry) => {
+                    // Skip the root directory itself
+                    if entry.path() == path {
+                        continue;
+                    }
+
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+
+                    let prefix = if entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                        "[DIR] "
+                    } else {
+                        "[FILE] "
+                    };
+
+                    entries.push(format!("{prefix}{file_name}"));
+                }
+                Err(err) => {
+                    // Log the error but continue processing
+                    eprintln!("Warning: Error reading entry: {err}");
+                }
             }
-
-            let prefix = if entry.path().is_dir() {
-                "[DIR] "
-            } else {
-                "[FILE] "
-            };
-            entries.push(format!("{prefix}{file_name}"));
         }
 
         entries.sort();
