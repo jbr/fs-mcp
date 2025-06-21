@@ -240,14 +240,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
+name = "fieldwork"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "003d86ae838cb76586d6e308e7cbb60cad5bea13b837345daf98aae4204d87fb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "fs-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "dirs",
+ "fieldwork",
  "glob",
  "ignore",
+ "pathdiff",
  "serde",
  "serde_json",
  "tempfile",
@@ -449,6 +462,12 @@ dependencies = [
  "smallvec",
  "windows-targets 0.52.6",
 ]
+
+[[package]]
+name = "pathdiff"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "pin-project-lite"

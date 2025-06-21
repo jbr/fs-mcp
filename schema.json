@@ -11,13 +11,12 @@
         },
         "session_id": {
           "type": "string",
-          "description": "Optional session identifier. Defaults to 'default'"
+          "description": "Optional session identifier. Required for operations relative to context path"
         }
       },
       "required": [
         "path"
-      ],
-      "additionalProperties": false
+      ]
     }
   },
   {
@@ -28,7 +27,7 @@
       "properties": {
         "path": {
           "type": "string",
-          "description": "Directory path or glob pattern (absolute, relative to session context, or with wildcards like 'src/**/*.rs')"
+          "description": "Directory path or glob pattern. Can be absolute, or relative to session context path. Can include wildcards like 'src/**/*.{rs,json}'."
         },
         "session_id": {
           "type": "string",
@@ -37,12 +36,15 @@
         "include_gitignore": {
           "type": "boolean",
           "description": "Include files normally ignored by gitignore. Defaults to false"
+        },
+        "recursive": {
+          "type": "boolean",
+          "description": "Recurse into directories (only relevant if path does not contain a glob pattern)"
         }
       },
       "required": [
         "path"
-      ],
-      "additionalProperties": false
+      ]
     }
   }
 ]
