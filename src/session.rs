@@ -26,6 +26,7 @@ impl<T> SessionEntry<T> {
 }
 
 /// Generic session store that handles persistence and lifecycle management
+#[derive(Debug, Clone)]
 pub struct SessionStore<T> {
     sessions: Arc<RwLock<HashMap<String, SessionEntry<T>>>>,
     storage_path: PathBuf,

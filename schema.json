@@ -27,11 +27,11 @@
       "properties": {
         "path": {
           "type": "string",
-          "description": "Directory path or glob pattern. Can be absolute, or relative to session context path. Can include wildcards like 'src/**/*.{rs,json}'."
+          "description": "Directory path or glob pattern. Can be absolute, or relative to session context path. Can include wildcards like 'src/**/*'."
         },
         "session_id": {
           "type": "string",
-          "description": "Optional session identifier for context. Defaults to 'default'"
+          "description": "Optional session identifier for context"
         },
         "include_gitignore": {
           "type": "boolean",

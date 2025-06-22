@@ -1,32 +1,37 @@
-use std::sync::Arc;
-
+use crate::{tools::FsTools, traits::WithExamples, types::Example};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::tools::FsTools;
-
-#[derive(Serialize, Deserialize, Debug)]
+/// Set the working context path for a session
+#[derive(Serialize, Deserialize, Debug, schemars::JsonSchema)]
+#[serde(rename = "set_context")]
 pub struct SetContext {
+    /// Directory path to set as context
     path: String,
-    session_id: Option<String>,
+    /// Session identifier
+    /// Can be absolutely anything, as long as it's unlikely to collide with another session, (ie not "claude")
+    session_id: String,
 }
+
+impl WithExamples for SetContext {
+    fn examples() -> Option<Vec<Example<Self>>> {
+        Some(vec![Example {
+            description: "setting context to a development project",
+            item: Self {
+                path: "/usr/local/projects/cobol".into(),
+                session_id: "GraceHopper1906".into(),
+            },
+        }])
+    }
+}
+
 impl SetContext {
-    pub(crate) fn execute(&self, state: Arc<FsTools>) -> Result<String, anyhow::Error> {
-        match &self.session_id {
-            Some(session_id) => {
-                let mut session_data = state.session_store.get_or_create(session_id)?;
-                session_data.context_path = Some(self.path.clone().into());
-                state.session_store.set(session_id, session_data)?;
-
-                Ok(format!(
-                    "Set context to {} for session '{}'",
-                    self.path,
-                    session_id
-                ))
-            }
-
-            None => Ok(
-                "No session found. Provide a session id to isolate your work from other conversations.".into()
-            ),
-        }
+    pub(crate) fn execute(self, state: FsTools) -> Result<String> {
+        let Self { path, session_id } = self;
+        let mut session_data = state.session_store.get_or_create(&session_id)?;
+        let response = format!("Set context to {path} for session '{session_id}'");
+        session_data.context_path = Some(path.into());
+        state.session_store.set(&session_id, session_data)?;
+        Ok(response)
     }
 }

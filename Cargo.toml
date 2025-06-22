@@ -15,4 +15,8 @@ dirs = "6.0"
 tempfile = "3.0"
 pathdiff = "0.2.3"
 fieldwork = "0.3.0"
+schemars = "1.0.0-rc.2"
+shellexpand = "3.1.1"
+size = "0.5.0"
+timeago = "0.4.2"
 
