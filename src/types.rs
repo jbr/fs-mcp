@@ -1,4 +1,4 @@
-use crate::tools::Tools;
+use crate::{state::FsTools, tools::Tools};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -30,6 +30,34 @@ pub enum RequestType {
 
     #[serde(rename = "tools/call")]
     ToolsCall(Tools),
+}
+
+impl RequestType {
+    pub fn execute(
+        self,
+        id: Value,
+        state: &mut FsTools,
+        instructions: Option<&'static str>,
+    ) -> McpResponse {
+        match self {
+            RequestType::Initialize(_) => McpResponse::success(
+                id,
+                InitializeResponse::default().with_instructions(instructions),
+            ),
+
+            RequestType::ToolsList(_) => McpResponse::success(
+                id,
+                ToolsListResponse {
+                    tools: Tools::schema(),
+                },
+            ),
+
+            RequestType::ToolsCall(tool) => match tool.execute(state) {
+                Ok(string) => McpResponse::success(id, ContentResponse::text(string)),
+                Err(e) => McpResponse::error(id, -32601, e.to_string()),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

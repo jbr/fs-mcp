@@ -60,7 +60,7 @@ impl WithExamples for List {
 }
 
 impl List {
-    pub fn execute(self, state: FsTools) -> Result<String> {
+    pub fn execute(self, state: &mut FsTools) -> Result<String> {
         // Parse path to separate directory from glob pattern
         let (base_path, pattern) = self.parse_path_and_pattern()?;
 

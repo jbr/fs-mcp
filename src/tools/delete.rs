@@ -28,7 +28,7 @@ impl WithExamples for Delete {
 }
 
 impl Delete {
-    pub fn execute(self, state: FsTools) -> Result<String> {
+    pub fn execute(self, state: &mut FsTools) -> Result<String> {
         let path = state.resolve_path(&self.path, self.session_id.as_deref())?;
         std::fs::remove_file(&path)?;
         Ok(format!("Successfully deleted {}", path.display()))

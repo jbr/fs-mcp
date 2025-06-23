@@ -65,7 +65,7 @@ impl Move {
         self.create_directories.unwrap_or(true)
     }
 
-    pub fn execute(self, state: FsTools) -> Result<String> {
+    pub fn execute(self, state: &mut FsTools) -> Result<String> {
         let source = state.resolve_path(&self.source, self.session_id.as_deref())?;
         let destination = state.resolve_path(&self.destination, self.session_id.as_deref())?;
 

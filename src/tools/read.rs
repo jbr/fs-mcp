@@ -107,7 +107,7 @@ impl Read {
         ))
     }
 
-    pub fn execute(self, state: FsTools) -> Result<String> {
+    pub fn execute(self, state: &mut FsTools) -> Result<String> {
         let separator = std::iter::repeat_with(fastrand::alphanumeric)
             .take(10)
             .collect::<String>();

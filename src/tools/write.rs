@@ -69,7 +69,7 @@ impl Write {
         self.create_directories.unwrap_or(true)
     }
 
-    pub fn execute(self, state: FsTools) -> Result<String> {
+    pub fn execute(self, state: &mut FsTools) -> Result<String> {
         let path = state.resolve_path(&self.path, self.session_id.as_deref())?;
         if self.create_directories() {
             if let Some(parent_dir) = path.parent() {

@@ -26,12 +26,12 @@ impl WithExamples for SetContext {
 }
 
 impl SetContext {
-    pub(crate) fn execute(self, state: FsTools) -> Result<String> {
+    pub(crate) fn execute(self, state: &mut FsTools) -> Result<String> {
         let Self { path, session_id } = self;
-        let mut session_data = state.session_store.get_or_create(&session_id)?;
+        let mut session_data = state.session_store().get_or_create(&session_id)?;
         let response = format!("Set context to {path} for session '{session_id}'");
         session_data.context_path = Some(path.into());
-        state.session_store.set(&session_id, session_data)?;
+        state.session_store().set(&session_id, session_data)?;
         Ok(response)
     }
 }
