@@ -12,6 +12,7 @@ mod tests;
 use std::{
     fs::OpenOptions,
     io::{BufRead, BufReader, Write},
+    path::PathBuf,
 };
 
 use anyhow::Result;
@@ -32,9 +33,17 @@ fn main() -> Result<()> {
     let mut line = String::new();
 
     if let Ok(log_location) = std::env::var("LOG_LOCATION") {
+        let path = PathBuf::from(&*shellexpand::tilde(&log_location));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         Builder::from_default_env()
             .target(Target::Pipe(Box::new(
-                OpenOptions::new().append(true).open(log_location).unwrap(),
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .unwrap(),
             )))
             .init();
     }
