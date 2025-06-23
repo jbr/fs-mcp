@@ -2,14 +2,15 @@ use crate::{tools::FsTools, traits::WithExamples, types::Example};
 use anyhow::{Result, anyhow};
 use glob::Pattern;
 use ignore::{Walk, WalkBuilder};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use size::Size;
 use std::path::Path;
 
-/// List directory contents with session context support, globbing and gitignore
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename = "list_directory")]
-pub struct ListDirectory {
+/// List file system contents with session context support, globbing and gitignore
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename = "list")]
+pub struct List {
     /// Directory path or glob pattern.
     /// Can be absolute, or relative to session context path. Can include wildcards like 'src/**/*'.
     pub path: String,
@@ -31,7 +32,7 @@ pub struct ListDirectory {
     pub include_metadata: Option<bool>,
 }
 
-impl WithExamples for ListDirectory {
+impl WithExamples for List {
     fn examples() -> Option<Vec<Example<Self>>> {
         Some(vec![
             Example {
@@ -58,7 +59,7 @@ impl WithExamples for ListDirectory {
     }
 }
 
-impl ListDirectory {
+impl List {
     pub fn execute(self, state: FsTools) -> Result<String> {
         // Parse path to separate directory from glob pattern
         let (base_path, pattern) = self.parse_path_and_pattern()?;
@@ -129,6 +130,8 @@ impl ListDirectory {
             walker.max_depth(Some(1));
         }
 
+        walker.hidden(false);
+
         if !self.gitignore() {
             walker
                 .git_ignore(false)
@@ -137,16 +140,10 @@ impl ListDirectory {
         }
 
         // Add glob pattern filtering if provided
-        if let Some(pattern) = glob_pattern {
-            let pattern_clone = pattern.clone();
+        if let Some(pattern) = glob_pattern.cloned() {
+            let base_path = base_path.to_owned();
             walker.filter_entry(move |entry| {
-                // Always allow directories to be traversed for pattern matching
-                if entry.file_type().is_some_and(|ft| ft.is_dir()) {
-                    return true;
-                }
-
-                // For files, check if they match the glob pattern
-                pattern_clone.matches_path(entry.path())
+                entry.path() != base_path && pattern.matches_path(entry.path())
             });
         }
 
@@ -170,11 +167,6 @@ impl ListDirectory {
         let mut entries = Vec::new();
         let formatter = timeago::Formatter::new();
         for entry in walker.flatten() {
-            // Skip the root directory itself
-            if entry.path() == base_path {
-                continue;
-            }
-
             let mut file_name =
                 pathdiff::diff_paths(entry.path(), base_path).unwrap_or(entry.path().to_owned());
 
@@ -182,23 +174,17 @@ impl ListDirectory {
                 file_name.push("");
             }
 
-            let show_entry = glob_pattern
-                .as_ref()
-                .is_none_or(|pattern| pattern.matches_path(entry.path()));
+            let metadata_string = if self.include_metadata() {
+                let metadata = entry.metadata()?;
+                let len = Size::from_bytes(metadata.len());
+                let created = formatter.convert(metadata.created()?.elapsed()?);
+                let modified = formatter.convert(metadata.modified()?.elapsed()?);
+                format!(" | {len} | created {created} | modified {modified}")
+            } else {
+                String::new()
+            };
 
-            if show_entry {
-                let metadata_string = if self.include_metadata() {
-                    let metadata = entry.metadata()?;
-                    let len = Size::from_bytes(metadata.len());
-                    let created = formatter.convert(metadata.created()?.elapsed()?);
-                    let modified = formatter.convert(metadata.modified()?.elapsed()?);
-                    format!(" | {len} | created {created} | modified {modified}")
-                } else {
-                    String::new()
-                };
-
-                entries.push(format!("{}{}", file_name.display(), metadata_string));
-            }
+            entries.push(format!("{}{}", file_name.display(), metadata_string));
         }
         entries.sort();
         Ok(entries)

@@ -1,12 +1,15 @@
 use crate::{tools::FsTools, traits::WithExamples, types::Example};
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::{fs::OpenOptions, io::Write};
+use std::{
+    fs::OpenOptions,
+    io::{ErrorKind, Write as _},
+};
 
 /// Write contents to a file, optionally creating any directories needed
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename = "write_file")]
-pub struct WriteFile {
+#[serde(rename = "write")]
+pub struct Write {
     /// Path to write to
     /// Can be absolute, or relative to session context path.
     pub path: String,
@@ -30,7 +33,7 @@ pub struct WriteFile {
     pub create_directories: Option<bool>,
 }
 
-impl WithExamples for WriteFile {
+impl WithExamples for Write {
     fn examples() -> Option<Vec<Example<Self>>> {
         Some(vec![
             Example {
@@ -57,7 +60,7 @@ impl WithExamples for WriteFile {
     }
 }
 
-impl WriteFile {
+impl Write {
     fn overwrite(&self) -> bool {
         self.overwrite.unwrap_or_default()
     }
@@ -70,7 +73,9 @@ impl WriteFile {
         let path = state.resolve_path(&self.path, self.session_id.as_deref())?;
         if self.create_directories() {
             if let Some(parent_dir) = path.parent() {
-                std::fs::create_dir_all(parent_dir)?;
+                std::fs::create_dir_all(parent_dir).with_context(|| {
+                    format!("trying to create directories for {}", parent_dir.display())
+                })?;
             }
         }
         let mut open_options = OpenOptions::new();
@@ -81,7 +86,17 @@ impl WriteFile {
         };
 
         {
-            let mut file = open_options.open(&path)?;
+            let mut file = open_options
+                .open(&path)
+                .map_err(|e| if let ErrorKind::AlreadyExists = e.kind() {
+                    anyhow!(
+                        "File already exists, use \"overwrite\": true if you intend to replace it",
+                    )
+                } else {
+                    anyhow!(e)
+                })
+                .with_context(|| format!("Attempting to write to {}", path.display()))?;
+
             file.write_all(self.contents.as_bytes())?;
         }
 

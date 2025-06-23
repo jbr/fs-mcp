@@ -19,4 +19,7 @@ schemars = "1.0.0-rc.2"
 shellexpand = "3.1.1"
 size = "0.5.0"
 timeago = "0.4.2"
+env_logger = "0.11.8"
+log = "0.4.27"
+fastrand = "2.3.0"
 

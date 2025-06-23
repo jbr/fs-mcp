@@ -1,52 +1,58 @@
 use crate::{session::SessionStore, traits::AsToolSchema, types::ToolSchema};
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 
-mod delete_file;
-mod list_directory;
-mod move_file;
+mod delete;
+mod list;
+mod r#move;
+mod read;
 mod set_context;
-mod write_file;
+mod write;
 
-pub use delete_file::DeleteFile;
-pub use list_directory::ListDirectory;
-pub use move_file::MoveFile;
+pub use delete::Delete;
+pub use list::List;
+pub use r#move::Move;
+pub use read::Read;
 pub use set_context::SetContext;
-pub use write_file::WriteFile;
+pub use write::Write;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "name")]
 pub enum Tools {
-    #[serde(rename = "list_directory")]
-    ListDirectory { arguments: ListDirectory },
+    #[serde(rename = "list")]
+    List { arguments: List },
     #[serde(rename = "set_context")]
     SetContext { arguments: SetContext },
-    #[serde(rename = "write_file")]
-    WriteFile { arguments: WriteFile },
-    #[serde(rename = "delete_file")]
-    DeleteFile { arguments: DeleteFile },
-    #[serde(rename = "move_file")]
-    MoveFile { arguments: MoveFile },
+    #[serde(rename = "write")]
+    Write { arguments: Write },
+    #[serde(rename = "delete")]
+    Delete { arguments: Delete },
+    #[serde(rename = "move")]
+    Move { arguments: Move },
+    #[serde(rename = "read")]
+    Read { arguments: Read },
 }
 impl Tools {
     pub fn execute(self, state: FsTools) -> Result<String> {
         match self {
-            Tools::ListDirectory { arguments } => arguments.execute(state),
+            Tools::List { arguments } => arguments.execute(state),
             Tools::SetContext { arguments } => arguments.execute(state),
-            Tools::WriteFile { arguments } => arguments.execute(state),
-            Tools::DeleteFile { arguments } => arguments.execute(state),
-            Tools::MoveFile { arguments } => arguments.execute(state),
+            Tools::Write { arguments } => arguments.execute(state),
+            Tools::Delete { arguments } => arguments.execute(state),
+            Tools::Move { arguments } => arguments.execute(state),
+            Tools::Read { arguments } => arguments.execute(state),
         }
     }
 
     pub fn schema() -> Vec<ToolSchema> {
         vec![
             SetContext::as_tool_schema(),
-            ListDirectory::as_tool_schema(),
-            WriteFile::as_tool_schema(),
-            DeleteFile::as_tool_schema(),
-            MoveFile::as_tool_schema(),
+            List::as_tool_schema(),
+            Write::as_tool_schema(),
+            Delete::as_tool_schema(),
+            Move::as_tool_schema(),
+            Read::as_tool_schema(),
         ]
     }
 }
@@ -97,7 +103,7 @@ impl FsTools {
             None => Err(anyhow!(
                 "No session found. Provide a session key and use set_context first to use relative paths."
             )),
-        }
+        }.with_context(|| format!("Attempting to resolve {}", path.display()))
     }
 
     /// Get context for a session

@@ -130,6 +130,23 @@ pub enum InputSchema {
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<String>,
     },
+
+    #[serde(rename = "integer")]
+    Integer {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+
+    #[serde(rename = "array")]
+    Array {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        items: Box<InputSchema>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -156,8 +173,13 @@ pub struct McpError {
     pub data: Option<Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct ContentResponse {
+    content: Vec<TextContent>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TextContent {
     pub r#type: &'static str,
     pub text: String,
 }
@@ -165,8 +187,10 @@ pub struct ContentResponse {
 impl ContentResponse {
     pub fn text(text: String) -> Self {
         Self {
-            r#type: "text",
-            text,
+            content: vec![TextContent {
+                r#type: "text",
+                text,
+            }],
         }
     }
 }

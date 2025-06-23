@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 /// Move a file from one location to another
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename = "move_file")]
-pub struct MoveFile {
+#[serde(rename = "move")]
+pub struct Move {
     /// Path to move from
     /// Can be absolute, or relative to session context path.
     pub source: String,
@@ -29,7 +29,7 @@ pub struct MoveFile {
     pub create_directories: Option<bool>,
 }
 
-impl WithExamples for MoveFile {
+impl WithExamples for Move {
     fn examples() -> Option<Vec<Example<Self>>> {
         Some(vec![
             Example {
@@ -56,7 +56,7 @@ impl WithExamples for MoveFile {
     }
 }
 
-impl MoveFile {
+impl Move {
     fn overwrite(&self) -> bool {
         self.overwrite.unwrap_or_default()
     }

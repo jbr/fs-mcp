@@ -1,6 +1,4 @@
-use crate::{McpMessage, tools::SetContext, traits::AsToolSchema};
-
-use super::tools::ListDirectory;
+use crate::{McpMessage, tools::Tools};
 
 #[test]
 fn deserialize_initialize() {
@@ -29,7 +27,8 @@ fn deserialize_list_directory() {
 
 #[test]
 fn schemars_dont_panic() {
-    dbg!(ListDirectory::as_tool_schema());
-    dbg!(SetContext::as_tool_schema());
-    panic!()
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&Tools::schema()).unwrap()
+    );
 }
