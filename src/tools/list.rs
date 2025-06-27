@@ -20,11 +20,15 @@ pub struct List {
     pub session_id: Option<String>,
 
     /// Hide gitignored files.
-    /// Defaults to true
+    ///
+    /// Defaults to true (setting to false will show gitignored files)
+    /// When `recursive` is true, gitignored files will always be hidden
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gitignore: Option<bool>,
 
     /// Recurse into directories (only relevant if path does not contain a glob pattern)
+    ///
+    /// When `recursive` is true, gitignored files will always be hidden
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recursive: Option<bool>,
 
@@ -151,7 +155,7 @@ impl List {
     }
 
     fn gitignore(&self) -> bool {
-        self.gitignore.unwrap_or(true)
+        !self.recursive() && self.gitignore.unwrap_or(true)
     }
 
     fn include_metadata(&self) -> bool {
