@@ -9,9 +9,8 @@ use std::{
 
 /// Write contents to a file, optionally creating any directories needed
 ///
-/// Usage recommendation: If the content you're going to write is more than several hundred lines,
-/// it is best to write it with several successive `"append": true` calls because sometimes Claude
-/// Desktop interrupts long responses, and there is nothing the MCP server can do to prevent this.
+/// Usage recommendation: For very large files, you may want to use multiple append operations
+/// if you encounter interruption issues.
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename = "write")]
 pub struct Write {
@@ -126,7 +125,7 @@ impl Write {
         if self.append() {
             open_options.create(true).append(true);
         } else if self.overwrite() {
-            open_options.truncate(true).create(true);
+            open_options.truncate(true).write(true);
         } else {
             open_options.write(true).create_new(true);
         }
