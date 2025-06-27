@@ -115,13 +115,12 @@ impl Read {
             .paths
             .iter()
             .map(|path| {
-                self.read_file(&state, path, &separator)
-                    .unwrap_or_else(|e| {
-                        format!(
-                            "=={separator} BEGIN ERROR {path} {separator}==\n\
+                self.read_file(state, path, &separator).unwrap_or_else(|e| {
+                    format!(
+                        "=={separator} BEGIN ERROR {path} {separator}==\n\
                         {e}\n=={separator} END ERROR {path} {separator}=="
-                        )
-                    })
+                    )
+                })
             })
             .collect())
     }
