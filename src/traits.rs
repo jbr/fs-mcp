@@ -1,8 +1,8 @@
 use crate::types::{Example, ToolSchema};
 use schemars::{
-    JsonSchema, Schema,
     generate::SchemaSettings,
     transform::{RecursiveTransform, Transform},
+    JsonSchema, Schema,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -21,11 +21,17 @@ fn remove_null(schema: &mut Schema) {
             *a = arr.pop().unwrap();
         }
     }
+
+    if let Some(a @ Value::Array(_)) = schema.get_mut("enum") {
+        let arr = a.as_array_mut().unwrap();
+        arr.retain(|v| matches!(v, Value::String(s) if s != "null"));
+    }
 }
 
 pub trait AsToolSchema {
     fn as_tool_schema() -> ToolSchema;
 }
+
 impl<T> AsToolSchema for T
 where
     T: JsonSchema + WithExamples,
@@ -62,12 +68,26 @@ where
             );
         }
 
-        let input_schema = serde_json::from_value(schema.into()).unwrap();
-
-        ToolSchema {
-            name,
-            description: Some(description),
-            input_schema,
+        match serde_json::from_value(schema.clone().into()) {
+            Ok(input_schema) => ToolSchema {
+                name,
+                description: Some(description),
+                input_schema,
+            },
+            Err(e) => {
+                let json = serde_json::to_string_pretty(&schema).unwrap();
+                eprintln!("{json}");
+                log::error!("{json}");
+                panic!("{e}")
+            }
         }
+
+        // let input_schema = serde_json::from_value(schema.into()).unwrap();
+
+        // ToolSchema {
+        //     name,
+        //     description: Some(description),
+        //     input_schema,
+        // }
     }
 }

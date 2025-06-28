@@ -18,9 +18,7 @@ use std::{
 use anyhow::Result;
 use env_logger::{Builder, Target};
 use state::FsTools;
-pub use types::{
-    ContentResponse, InitializeResponse, McpMessage, McpResponse, RequestType, ToolsListResponse,
-};
+pub use types::{ContentResponse, InitializeResponse, McpMessage, McpResponse, ToolsListResponse};
 
 const INSTRUCTIONS: &str = "Filesystem operations with session support. Use session_id for persistent context between operations.";
 
@@ -54,15 +52,22 @@ fn main() -> Result<()> {
             Ok(0) => break, // EOF
             Ok(_) => {
                 log::trace!("<- {line}");
-                if let Ok(McpMessage::Request(request)) = serde_json::from_str(&line) {
-                    let response = request
-                        .call
-                        .execute(request.id, &mut state, Some(INSTRUCTIONS));
-                    let response_str = serde_json::to_string(&response)?;
-                    log::trace!("-> {response_str}");
-                    stdout.write_all(response_str.as_bytes())?;
-                    stdout.write_all(b"\n")?;
-                    stdout.flush()?;
+                match serde_json::from_str(&line) {
+                    Ok(McpMessage::Request(request)) => {
+                        let response = request.execute(&mut state, Some(INSTRUCTIONS));
+                        let response_str = serde_json::to_string(&response)?;
+                        log::trace!("-> {response_str}");
+                        stdout.write_all(response_str.as_bytes())?;
+                        stdout.write_all(b"\n")?;
+                        stdout.flush()?;
+                    }
+                    Ok(McpMessage::Notification(n)) => {
+                        log::trace!("received {n:?}, ignoring");
+                    }
+
+                    Err(e) => {
+                        log::error!("{e:?}");
+                    }
                 }
             }
             Err(e) => {

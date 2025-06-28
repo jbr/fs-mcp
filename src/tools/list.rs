@@ -13,7 +13,8 @@ use std::path::Path;
 pub struct List {
     /// Directory path or glob pattern.
     /// Can be absolute, or relative to session context path. Can include wildcards like 'src/**/*'.
-    pub path: String,
+    /// Defaults to the current session context if not provided
+    pub path: Option<String>,
 
     /// Optional session identifier for context
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,7 +43,7 @@ impl WithExamples for List {
             Example {
                 description: "Finding all rust files within a project, having already set context. Include metadata",
                 item: Self {
-                    path: "src/**/*.rs".into(),
+                    path: Some("src/**/*.rs".into()),
                     session_id: Some("some_rust_session_unique_id".into()),
                     gitignore: None,
                     recursive: None,
@@ -52,7 +53,7 @@ impl WithExamples for List {
             Example {
                 description: "recursively showing all files by absolute path",
                 item: Self {
-                    path: "/some/absolute/path".into(),
+                    path: Some("/some/absolute/path".into()),
                     session_id: None,
                     gitignore: None,
                     recursive: Some(true),
@@ -91,7 +92,7 @@ impl List {
     /// Parse a path string that might contain glob patterns
     /// Returns (base_directory_path, optional_pattern)
     fn parse_path_and_pattern(&self) -> Result<(&str, Option<&str>)> {
-        let path_str = &*self.path;
+        let path_str = self.path.as_deref().unwrap_or(".");
 
         // Check if path contains glob patterns
         if path_str.contains('*') || path_str.contains('?') || path_str.contains('[') {

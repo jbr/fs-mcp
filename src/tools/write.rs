@@ -128,8 +128,7 @@ impl Write {
 
         if !tail.is_empty() {
             result.push_str(&format!(
-                "\nContext around append point (last {} lines):\n",
-                lines_to_show
+                "\nContext around append point (last {lines_to_show} lines):\n"
             ));
             result.push_str(tail);
             result.push('\n');

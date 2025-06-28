@@ -6,6 +6,8 @@ mod delete;
 mod list;
 mod r#move;
 mod read;
+mod search;
+
 mod set_context;
 mod write;
 
@@ -39,6 +41,7 @@ tools!(
     (List, list, "list"),
     (Move, r#move, "move"),
     (SetContext, set_context, "set_context"),
+    (Search, search, "search"),
     (Write, write, "write"),
     (Read, read, "read")
 );

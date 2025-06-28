@@ -1,61 +1,62 @@
-use crate::{state::FsTools, tools::Tools};
-use serde::{Deserialize, Serialize};
+use crate::state::FsTools;
+use crate::tools::Tools;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-
 use std::{borrow::Cow, collections::HashMap};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum McpMessage {
+    #[serde(deserialize_with = "deserialize_request")]
     Request(McpRequest),
     Notification(McpNotification),
+}
+
+fn deserialize_request<'de, D>(deserializer: D) -> Result<McpRequest, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Value = Deserialize::deserialize(deserializer)?;
+    if value.get("id").is_some() {
+        // Use from_value instead of deserialize
+        serde_json::from_value(value).map_err(serde::de::Error::custom)
+    } else {
+        Err(serde::de::Error::custom("Not a request"))
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct McpRequest {
     pub jsonrpc: String,
     pub id: Value,
-    #[serde(flatten)]
-    pub call: RequestType,
+    pub method: String,
+    pub params: Option<Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "method", content = "params")]
-pub enum RequestType {
-    #[serde(rename = "initialize")]
-    Initialize(InitializeRequest),
-
-    #[serde(rename = "tools/list")]
-    ToolsList(Value),
-
-    #[serde(rename = "tools/call")]
-    ToolsCall(Tools),
-}
-
-impl RequestType {
-    pub fn execute(
-        self,
-        id: Value,
-        state: &mut FsTools,
-        instructions: Option<&'static str>,
-    ) -> McpResponse {
-        match self {
-            RequestType::Initialize(_) => McpResponse::success(
+impl McpRequest {
+    pub fn execute(self, state: &mut FsTools, instructions: Option<&'static str>) -> McpResponse {
+        let Self {
+            id, method, params, ..
+        } = self;
+        match method.as_str() {
+            "initialize" => McpResponse::success(
                 id,
                 InitializeResponse::default().with_instructions(instructions),
             ),
-
-            RequestType::ToolsList(_) => McpResponse::success(
+            "tools/list" => McpResponse::success(
                 id,
                 ToolsListResponse {
                     tools: Tools::schema(),
                 },
             ),
-
-            RequestType::ToolsCall(tool) => match tool.execute(state) {
-                Ok(string) => McpResponse::success(id, ContentResponse::text(string)),
+            "tools/call" => match serde_json::from_value::<Tools>(params.unwrap_or(Value::Null)) {
+                Ok(tool) => match tool.execute(state) {
+                    Ok(string) => McpResponse::success(id, ContentResponse::text(string)),
+                    Err(e) => McpResponse::error(id, -32601, e.to_string()),
+                },
                 Err(e) => McpResponse::error(id, -32601, e.to_string()),
             },
+            _ => McpResponse::error(id, -32601, format!("Unknown method: {method}")),
         }
     }
 }
@@ -124,8 +125,33 @@ pub struct ToolSchema {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(untagged)]
 pub enum InputSchema {
+    // Union types (check these first)
+    AnyOf {
+        #[serde(rename = "anyOf")]
+        any_of: Vec<InputSchema>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+    OneOf {
+        #[serde(rename = "oneOf")]
+        one_of: Vec<InputSchema>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        examples: Option<Vec<Value>>,
+    },
+    Tagged(Tagged),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum Tagged {
     #[serde(rename = "object")]
     Object {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,7 +159,8 @@ pub enum InputSchema {
         #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
         properties: HashMap<String, Box<InputSchema>>,
-        required: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        required: Option<Vec<String>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         additional_properties: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -175,9 +202,13 @@ pub enum InputSchema {
         description: Option<String>,
         items: Box<InputSchema>,
     },
+
+    #[serde(rename = "null")]
+    Null,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct McpNotification {
     pub jsonrpc: String,
     pub method: String,
