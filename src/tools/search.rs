@@ -1,7 +1,7 @@
 use crate::tools::FsTools;
 use anyhow::{Context, Result};
 use grep::matcher::Matcher;
-use grep::regex::{RegexMatcher, RegexMatcherBuilder};
+use grep::regex::RegexMatcherBuilder;
 use grep::searcher::{SearcherBuilder, sinks::UTF8};
 use mcplease::{
     traits::{Tool, WithExamples},
@@ -46,31 +46,26 @@ pub struct Search {
     /// Highlight style for matches in output
     /// Options: "none", "box", "emphasis", "ansi", "markdown"
     /// Default: "box"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub highlight_style: Option<String>,
+    #[serde(default)]
+    pub highlight_style: HighlightStyle,
 }
 
-#[derive(Debug, Clone)]
-enum HighlightStyle {
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema, Clone, Copy)]
+pub enum HighlightStyle {
+    #[serde(rename = "none")]
     None,
-    Box,      // ┌─match─┐
+    #[serde(rename = "box")]
+    #[default]
+    Box, // ┌─match─┐
+    #[serde(rename = "emphasis")]
     Emphasis, // ⦗match⦘
-    Ansi,     // ANSI color codes
+    #[serde(rename = "ansi")]
+    Ansi, // ANSI color codes
+    #[serde(rename = "markdown")]
     Markdown, // **match**
 }
 
 impl HighlightStyle {
-    fn from_string(s: Option<&str>) -> Self {
-        match s {
-            Some("none") => Self::None,
-            Some("emphasis") => Self::Emphasis,
-            Some("ansi") => Self::Ansi,
-            Some("markdown") => Self::Markdown,
-            Some("box") | None => Self::Box, // Default
-            _ => Self::Box,
-        }
-    }
-
     fn highlight(&self, text: &str, pattern: &str, case_sensitive: bool) -> String {
         match self {
             Self::None => text.to_string(),
@@ -109,7 +104,7 @@ impl HighlightStyle {
             Err(_) => {
                 // Fallback to literal string replacement if regex fails
                 if case_sensitive {
-                    text.replace(pattern, &format!("{}{}{}", prefix, pattern, suffix))
+                    text.replace(pattern, &format!("{prefix}{pattern}{suffix}"))
                 } else {
                     // Simple case-insensitive replacement
                     let lower_text = text.to_lowercase();
@@ -120,7 +115,7 @@ impl HighlightStyle {
                         let actual_match = &text[pos..pos + pattern.len()];
                         result.replace_range(
                             pos..pos + pattern.len(),
-                            &format!("{}{}{}", prefix, actual_match, suffix),
+                            &format!("{prefix}{actual_match}{suffix}"),
                         );
                         result
                     } else {
@@ -144,7 +139,7 @@ impl WithExamples for Search {
                     case_sensitive: Some(false),
                     include_extensions: Some(vec!["rs".to_string()]),
                     max_results: Some(10),
-                    highlight_style: Some("box".to_string()),
+                    highlight_style: HighlightStyle::Box,
                 },
             },
             Example {
@@ -156,7 +151,7 @@ impl WithExamples for Search {
                     case_sensitive: Some(false),
                     include_extensions: None,
                     max_results: Some(20),
-                    highlight_style: Some("emphasis".to_string()),
+                    highlight_style: HighlightStyle::Emphasis,
                 },
             },
             Example {
@@ -168,7 +163,7 @@ impl WithExamples for Search {
                     case_sensitive: Some(false),
                     include_extensions: None,
                     max_results: Some(15),
-                    highlight_style: Some("ansi".to_string()),
+                    highlight_style: HighlightStyle::Ansi,
                 },
             },
         ]
@@ -182,18 +177,10 @@ impl Tool<FsTools> for Search {
             self.session_id.as_deref(),
         )?;
 
-        let matcher =
-            RegexMatcher::new_line_matcher(&self.pattern).context("Invalid regex pattern")?;
-
-        if !self.case_sensitive() {
-            // For case insensitive, we need to use the builder
-            let matcher = RegexMatcherBuilder::new()
-                .case_insensitive(true)
-                .build(&self.pattern)
-                .context("Invalid regex pattern")?;
-
-            return self.search_with_matcher(&search_path, matcher);
-        }
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(!self.case_sensitive())
+            .build(&self.pattern)
+            .context("Invalid regex pattern")?;
 
         self.search_with_matcher(&search_path, matcher)
     }
@@ -209,7 +196,7 @@ impl Search {
     }
 
     fn highlight_style(&self) -> HighlightStyle {
-        HighlightStyle::from_string(self.highlight_style.as_deref())
+        self.highlight_style
     }
 
     fn search_with_matcher(&self, search_path: &Path, matcher: impl Matcher) -> Result<String> {
