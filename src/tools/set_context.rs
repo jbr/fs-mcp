@@ -1,5 +1,9 @@
-use crate::{tools::FsTools, traits::WithExamples, types::Example};
+use crate::tools::FsTools;
 use anyhow::Result;
+use mcplease::{
+    traits::{Tool, WithExamples},
+    types::Example,
+};
 use serde::{Deserialize, Serialize};
 
 /// Set the working context path for a session
@@ -14,19 +18,19 @@ pub struct SetContext {
 }
 
 impl WithExamples for SetContext {
-    fn examples() -> Option<Vec<Example<Self>>> {
-        Some(vec![Example {
+    fn examples() -> Vec<Example<Self>> {
+        vec![Example {
             description: "setting context to a development project",
             item: Self {
                 path: "/usr/local/projects/cobol".into(),
                 session_id: "GraceHopper1906".into(),
             },
-        }])
+        }]
     }
 }
 
-impl SetContext {
-    pub(crate) fn execute(self, state: &mut FsTools) -> Result<String> {
+impl Tool<FsTools> for SetContext {
+    fn execute(self, state: &mut FsTools) -> Result<String> {
         let Self { path, session_id } = self;
         let mut session_data = state.session_store().get_or_create(&session_id)?;
         let response = format!("Set context to {path} for session '{session_id}'");

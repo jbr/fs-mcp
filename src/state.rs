@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
-use crate::session::SessionStore;
+use mcplease::session::SessionStore;
 
 /// Session data specific to filesystem operations
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -28,7 +28,7 @@ impl FsTools {
         storage_dir.push("sessions");
         storage_dir.push("fs.json");
 
-        let session_store = SessionStore::new(storage_dir)?;
+        let session_store = SessionStore::new(Some(storage_dir))?;
 
         Ok(Self { session_store })
     }

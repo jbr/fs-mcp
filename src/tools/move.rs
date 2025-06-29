@@ -1,5 +1,9 @@
-use crate::{tools::FsTools, traits::WithExamples, types::Example};
+use crate::tools::FsTools;
 use anyhow::{Result, anyhow};
+use mcplease::{
+    traits::{Tool, WithExamples},
+    types::Example,
+};
 use serde::{Deserialize, Serialize};
 
 /// Move a file from one location to another
@@ -30,8 +34,8 @@ pub struct Move {
 }
 
 impl WithExamples for Move {
-    fn examples() -> Option<Vec<Example<Self>>> {
-        Some(vec![
+    fn examples() -> Vec<Example<Self>> {
+        vec![
             Example {
                 description: "Rename a new file relative to a session, creating a directory if needed",
                 item: Self {
@@ -52,7 +56,7 @@ impl WithExamples for Move {
                     create_directories: None,
                 },
             },
-        ])
+        ]
     }
 }
 
@@ -64,8 +68,10 @@ impl Move {
     fn create_directories(&self) -> bool {
         self.create_directories.unwrap_or(true)
     }
+}
 
-    pub fn execute(self, state: &mut FsTools) -> Result<String> {
+impl Tool<FsTools> for Move {
+    fn execute(self, state: &mut FsTools) -> Result<String> {
         let source = state.resolve_path(&self.source, self.session_id.as_deref())?;
         let destination = state.resolve_path(&self.destination, self.session_id.as_deref())?;
 

@@ -1,8 +1,12 @@
-use crate::{tools::FsTools, traits::WithExamples, types::Example};
+use crate::tools::FsTools;
 use anyhow::{Context, Result};
 use grep::matcher::Matcher;
-use grep::regex::RegexMatcher;
+use grep::regex::{RegexMatcher, RegexMatcherBuilder};
 use grep::searcher::{SearcherBuilder, sinks::UTF8};
+use mcplease::{
+    traits::{Tool, WithExamples},
+    types::Example,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -38,11 +42,99 @@ pub struct Search {
     /// Default: 50
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_results: Option<usize>,
+
+    /// Highlight style for matches in output
+    /// Options: "none", "box", "emphasis", "ansi", "markdown"
+    /// Default: "box"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highlight_style: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum HighlightStyle {
+    None,
+    Box,      // ┌─match─┐
+    Emphasis, // ⦗match⦘
+    Ansi,     // ANSI color codes
+    Markdown, // **match**
+}
+
+impl HighlightStyle {
+    fn from_string(s: Option<&str>) -> Self {
+        match s {
+            Some("none") => Self::None,
+            Some("emphasis") => Self::Emphasis,
+            Some("ansi") => Self::Ansi,
+            Some("markdown") => Self::Markdown,
+            Some("box") | None => Self::Box, // Default
+            _ => Self::Box,
+        }
+    }
+
+    fn highlight(&self, text: &str, pattern: &str, case_sensitive: bool) -> String {
+        match self {
+            Self::None => text.to_string(),
+            Self::Box => self.replace_matches(text, pattern, case_sensitive, "┌─", "─┐"),
+            Self::Emphasis => self.replace_matches(text, pattern, case_sensitive, "⦗", "⦘"),
+            Self::Ansi => {
+                self.replace_matches(text, pattern, case_sensitive, "\x1b[93m", "\x1b[0m")
+            }
+            Self::Markdown => self.replace_matches(text, pattern, case_sensitive, "**", "**"),
+        }
+    }
+
+    fn replace_matches(
+        &self,
+        text: &str,
+        pattern: &str,
+        case_sensitive: bool,
+        prefix: &str,
+        suffix: &str,
+    ) -> String {
+        // Try to build a regex from the pattern
+        let regex_result = if case_sensitive {
+            regex::Regex::new(pattern)
+        } else {
+            regex::RegexBuilder::new(pattern)
+                .case_insensitive(true)
+                .build()
+        };
+
+        match regex_result {
+            Ok(regex) => regex
+                .replace_all(text, |caps: &regex::Captures| {
+                    format!("{}{}{}", prefix, &caps[0], suffix)
+                })
+                .to_string(),
+            Err(_) => {
+                // Fallback to literal string replacement if regex fails
+                if case_sensitive {
+                    text.replace(pattern, &format!("{}{}{}", prefix, pattern, suffix))
+                } else {
+                    // Simple case-insensitive replacement
+                    let lower_text = text.to_lowercase();
+                    let lower_pattern = pattern.to_lowercase();
+
+                    if let Some(pos) = lower_text.find(&lower_pattern) {
+                        let mut result = text.to_string();
+                        let actual_match = &text[pos..pos + pattern.len()];
+                        result.replace_range(
+                            pos..pos + pattern.len(),
+                            &format!("{}{}{}", prefix, actual_match, suffix),
+                        );
+                        result
+                    } else {
+                        text.to_string()
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl WithExamples for Search {
-    fn examples() -> Option<Vec<Example<Self>>> {
-        Some(vec![
+    fn examples() -> Vec<Example<Self>> {
+        vec![
             Example {
                 description: "Search for function definitions in Rust files",
                 item: Self {
@@ -52,10 +144,11 @@ impl WithExamples for Search {
                     case_sensitive: Some(false),
                     include_extensions: Some(vec!["rs".to_string()]),
                     max_results: Some(10),
+                    highlight_style: Some("box".to_string()),
                 },
             },
             Example {
-                description: "Search for TODO comments",
+                description: "Search for TODO comments with emphasis highlighting",
                 item: Self {
                     pattern: "TODO|FIXME".to_string(),
                     path: None,
@@ -63,9 +156,46 @@ impl WithExamples for Search {
                     case_sensitive: Some(false),
                     include_extensions: None,
                     max_results: Some(20),
+                    highlight_style: Some("emphasis".to_string()),
                 },
             },
-        ])
+            Example {
+                description: "Search with ANSI color highlighting",
+                item: Self {
+                    pattern: "error".to_string(),
+                    path: Some("src/".to_string()),
+                    session_id: None,
+                    case_sensitive: Some(false),
+                    include_extensions: None,
+                    max_results: Some(15),
+                    highlight_style: Some("ansi".to_string()),
+                },
+            },
+        ]
+    }
+}
+
+impl Tool<FsTools> for Search {
+    fn execute(self, state: &mut FsTools) -> Result<String> {
+        let search_path = state.resolve_path(
+            self.path.as_deref().unwrap_or("."),
+            self.session_id.as_deref(),
+        )?;
+
+        let matcher =
+            RegexMatcher::new_line_matcher(&self.pattern).context("Invalid regex pattern")?;
+
+        if !self.case_sensitive() {
+            // For case insensitive, we need to use the builder
+            let matcher = RegexMatcherBuilder::new()
+                .case_insensitive(true)
+                .build(&self.pattern)
+                .context("Invalid regex pattern")?;
+
+            return self.search_with_matcher(&search_path, matcher);
+        }
+
+        self.search_with_matcher(&search_path, matcher)
     }
 }
 
@@ -78,26 +208,8 @@ impl Search {
         self.max_results.unwrap_or(50)
     }
 
-    pub fn execute(self, state: &mut FsTools) -> Result<String> {
-        let search_path = state.resolve_path(
-            self.path.as_deref().unwrap_or("."),
-            self.session_id.as_deref(),
-        )?;
-
-        let matcher =
-            RegexMatcher::new_line_matcher(&self.pattern).context("Invalid regex pattern")?;
-
-        if !self.case_sensitive() {
-            // For case insensitive, we need to use the builder
-            let matcher = grep::regex::RegexMatcherBuilder::new()
-                .case_insensitive(true)
-                .build(&self.pattern)
-                .context("Invalid regex pattern")?;
-
-            return self.search_with_matcher(&search_path, matcher);
-        }
-
-        self.search_with_matcher(&search_path, matcher)
+    fn highlight_style(&self) -> HighlightStyle {
+        HighlightStyle::from_string(self.highlight_style.as_deref())
     }
 
     fn search_with_matcher(&self, search_path: &Path, matcher: impl Matcher) -> Result<String> {
@@ -126,12 +238,18 @@ impl Search {
                 self.pattern
             );
 
+            let highlight_style = self.highlight_style();
+            let case_sensitive = self.case_sensitive();
+
             for result in results {
+                let highlighted_content =
+                    highlight_style.highlight(&result.line_content, &self.pattern, case_sensitive);
+
                 output.push_str(&format!(
                     "{}:{}: {}\n",
                     result.file_path,
                     result.line_number,
-                    result.line_content.trim()
+                    highlighted_content.trim()
                 ));
             }
 

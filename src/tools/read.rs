@@ -1,5 +1,9 @@
-use crate::{tools::FsTools, traits::WithExamples, types::Example};
+use crate::tools::FsTools;
 use anyhow::{Context, Result, anyhow};
+use mcplease::{
+    traits::{Tool, WithExamples},
+    types::Example,
+};
 use serde::{Deserialize, Serialize};
 use std::{io::Read as _, path::Path};
 
@@ -22,8 +26,8 @@ pub struct Read {
 }
 
 impl WithExamples for Read {
-    fn examples() -> Option<Vec<Example<Self>>> {
-        Some(vec![
+    fn examples() -> Vec<Example<Self>> {
+        vec![
             Example {
                 description: "Reading a file relative to a session",
                 item: Self {
@@ -52,7 +56,27 @@ impl WithExamples for Read {
                     max_length: None,
                 },
             },
-        ])
+        ]
+    }
+}
+
+impl Tool<FsTools> for Read {
+    fn execute(self, state: &mut FsTools) -> Result<String> {
+        let separator = std::iter::repeat_with(fastrand::alphanumeric)
+            .take(10)
+            .collect::<String>();
+        Ok(self
+            .paths
+            .iter()
+            .map(|path| {
+                self.read_file(state, path, &separator).unwrap_or_else(|e| {
+                    format!(
+                        "=={separator} BEGIN ERROR {path} {separator}==\n\
+                        {e}\n=={separator} END ERROR {path} {separator}=="
+                    )
+                })
+            })
+            .collect())
     }
 }
 
@@ -105,23 +129,5 @@ impl Read {
             path = path.display(),
             len = full_contents.len(),
         ))
-    }
-
-    pub fn execute(self, state: &mut FsTools) -> Result<String> {
-        let separator = std::iter::repeat_with(fastrand::alphanumeric)
-            .take(10)
-            .collect::<String>();
-        Ok(self
-            .paths
-            .iter()
-            .map(|path| {
-                self.read_file(state, path, &separator).unwrap_or_else(|e| {
-                    format!(
-                        "=={separator} BEGIN ERROR {path} {separator}==\n\
-                        {e}\n=={separator} END ERROR {path} {separator}=="
-                    )
-                })
-            })
-            .collect())
     }
 }

@@ -1,5 +1,9 @@
-use crate::{tools::FsTools, traits::WithExamples, types::Example};
+use crate::tools::FsTools;
 use anyhow::{Context, Result, anyhow};
+use mcplease::{
+    traits::{Tool, WithExamples},
+    types::Example,
+};
 use serde::{Deserialize, Serialize};
 use size::Size;
 use std::{
@@ -55,8 +59,8 @@ pub struct Write {
 }
 
 impl WithExamples for Write {
-    fn examples() -> Option<Vec<Example<Self>>> {
-        Some(vec![
+    fn examples() -> Vec<Example<Self>> {
+        vec![
             Example {
                 description: "Creating a new file relative to a session",
                 item: Self {
@@ -90,7 +94,7 @@ impl WithExamples for Write {
                     append: Some(true),
                 },
             },
-        ])
+        ]
     }
 }
 
@@ -153,8 +157,10 @@ impl Write {
 
         result
     }
+}
 
-    pub fn execute(self, state: &mut FsTools) -> Result<String> {
+impl Tool<FsTools> for Write {
+    fn execute(self, state: &mut FsTools) -> Result<String> {
         let path = state.resolve_path(&self.path, self.session_id.as_deref())?;
         if self.create_directories() {
             if let Some(parent_dir) = path.parent() {

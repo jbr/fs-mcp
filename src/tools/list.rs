@@ -1,7 +1,11 @@
-use crate::{tools::FsTools, traits::WithExamples, types::Example};
+use crate::tools::FsTools;
 use anyhow::{Result, anyhow};
 use glob::Pattern;
 use ignore::{Walk, WalkBuilder};
+use mcplease::{
+    traits::{Tool, WithExamples},
+    types::Example,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use size::Size;
@@ -38,8 +42,8 @@ pub struct List {
 }
 
 impl WithExamples for List {
-    fn examples() -> Option<Vec<Example<Self>>> {
-        Some(vec![
+    fn examples() -> Vec<Example<Self>> {
+        vec![
             Example {
                 description: "Finding all rust files within a project, having already set context. Include metadata",
                 item: Self {
@@ -60,12 +64,12 @@ impl WithExamples for List {
                     include_metadata: None,
                 },
             },
-        ])
+        ]
     }
 }
 
-impl List {
-    pub fn execute(self, state: &mut FsTools) -> Result<String> {
+impl Tool<FsTools> for List {
+    fn execute(self, state: &mut FsTools) -> Result<String> {
         // Parse path to separate directory from glob pattern
         let (base_path, pattern) = self.parse_path_and_pattern()?;
 
@@ -88,7 +92,9 @@ impl List {
 
         Ok(content)
     }
+}
 
+impl List {
     /// Parse a path string that might contain glob patterns
     /// Returns (base_directory_path, optional_pattern)
     fn parse_path_and_pattern(&self) -> Result<(&str, Option<&str>)> {

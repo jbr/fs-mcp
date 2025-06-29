@@ -1,5 +1,9 @@
-use crate::{tools::FsTools, traits::WithExamples, types::Example};
+use crate::tools::FsTools;
 use anyhow::Result;
+use mcplease::{
+    traits::{Tool, WithExamples},
+    types::Example,
+};
 use serde::{Deserialize, Serialize};
 
 /// Remove a file from disk
@@ -16,19 +20,19 @@ pub struct Delete {
 }
 
 impl WithExamples for Delete {
-    fn examples() -> Option<Vec<Example<Self>>> {
-        Some(vec![Example {
+    fn examples() -> Vec<Example<Self>> {
+        vec![Example {
             description: "Creating a new file relative to a session",
             item: Self {
                 path: "src/mod/file.rs".into(),
                 session_id: Some("some_rust_session_unique_id".into()),
             },
-        }])
+        }]
     }
 }
 
-impl Delete {
-    pub fn execute(self, state: &mut FsTools) -> Result<String> {
+impl Tool<FsTools> for Delete {
+    fn execute(self, state: &mut FsTools) -> Result<String> {
         let path = state.resolve_path(&self.path, self.session_id.as_deref())?;
         std::fs::remove_file(&path)?;
         Ok(format!("Successfully deleted {}", path.display()))

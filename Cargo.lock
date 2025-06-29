@@ -326,7 +326,9 @@ dependencies = [
  "grep",
  "ignore",
  "log",
+ "mcplease",
  "pathdiff",
+ "regex",
  "schemars",
  "serde",
  "serde_json",
@@ -587,6 +589,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
+name = "mcplease"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aafec4c199b444526bab67e03de00cd70736c113fe87e4bbb52c47968d4195d2"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "fieldwork",
+ "log",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shellexpand",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -787,9 +805,9 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "1.0.0-rc.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "284cf8058b5165c2e1aedb8f56f4b09a838a764d1c110178e1747d1f77a01ceb"
+checksum = "1375ba8ef45a6f15d83fa8748f1079428295d403d6ea991d09ab100155fbc06d"
 dependencies = [
  "dyn-clone",
  "ref-cast",
@@ -800,9 +818,9 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "1.0.0-rc.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ce51e6bea03670e88edba2d724eed817b97f4ab017a1001bae5da325ce93fe7"
+checksum = "2b13ed22d6d49fe23712e068770b5c4df4a693a2b02eeff8e7ca3135627a24f6"
 dependencies = [
  "proc-macro2",
  "quote",
