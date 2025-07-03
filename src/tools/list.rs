@@ -20,10 +20,6 @@ pub struct List {
     /// Defaults to the current session context if not provided
     pub path: Option<String>,
 
-    /// Optional session identifier for context
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-
     /// Hide gitignored files.
     ///
     /// Defaults to true (setting to false will show gitignored files)
@@ -48,7 +44,6 @@ impl WithExamples for List {
                 description: "Finding all rust files within a project, having already set context. Include metadata",
                 item: Self {
                     path: Some("src/**/*.rs".into()),
-                    session_id: Some("some_rust_session_unique_id".into()),
                     gitignore: None,
                     recursive: None,
                     include_metadata: Some(true),
@@ -58,7 +53,6 @@ impl WithExamples for List {
                 description: "recursively showing all files by absolute path",
                 item: Self {
                     path: Some("/some/absolute/path".into()),
-                    session_id: None,
                     gitignore: None,
                     recursive: Some(true),
                     include_metadata: None,
@@ -73,7 +67,7 @@ impl Tool<FsTools> for List {
         // Parse path to separate directory from glob pattern
         let (base_path, pattern) = self.parse_path_and_pattern()?;
 
-        let base_path = state.resolve_path(base_path, self.session_id.as_deref())?;
+        let base_path = state.resolve_path(base_path, None)?;
 
         if !base_path.is_dir() {
             return Err(anyhow!("Path is not a directory: {}", base_path.display()));

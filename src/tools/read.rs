@@ -15,10 +15,6 @@ pub struct Read {
     /// Can be absolute, or relative to session context path.
     pub paths: Vec<String>,
 
-    /// Optional session identifier for context
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-
     /// Max length in bytes to read. Will truncate response and indicate truncation.
     /// Final character may be a replacement character if truncated mid code point
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -29,10 +25,9 @@ impl WithExamples for Read {
     fn examples() -> Vec<Example<Self>> {
         vec![
             Example {
-                description: "Reading a file relative to a session",
+                description: "Reading a file relative to a session context",
                 item: Self {
                     paths: vec!["src/main.rs".into()],
-                    session_id: Some("some_rust_session_unique_id".into()),
                     max_length: None,
                 },
             },
@@ -40,7 +35,6 @@ impl WithExamples for Read {
                 description: "Reading the head of a file by absolute path",
                 item: Self {
                     paths: vec!["/some/absolute/path/src/main.rs".into()],
-                    session_id: None,
                     max_length: Some(100),
                 },
             },
@@ -52,7 +46,6 @@ impl WithExamples for Read {
                         "src/tools.rs".into(),
                         "src/tools/read.rs".into(),
                     ],
-                    session_id: Some("some_rust_session_unique_id".into()),
                     max_length: None,
                 },
             },
@@ -102,8 +95,8 @@ impl Read {
         ))
     }
 
-    fn read_file(&self, state: &FsTools, path: &str, separator: &str) -> Result<String> {
-        let path = state.resolve_path(path, self.session_id.as_deref())?;
+    fn read_file(&self, state: &mut FsTools, path: &str, separator: &str) -> Result<String> {
+        let path = state.resolve_path(path, None)?;
 
         if !path.exists() {
             return Err(anyhow!("{} does not exist", path.display()));

@@ -22,10 +22,6 @@ pub struct Write {
     /// Can be absolute, or relative to session context path.
     pub path: String,
 
-    /// Optional session identifier for context
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-
     /// The full contents of the file, expressed as a utf8 string, or in the case of `append`, the
     /// next chunk to write.
     pub contents: String,
@@ -65,7 +61,6 @@ impl WithExamples for Write {
                 description: "Creating a new file relative to a session",
                 item: Self {
                     path: "src/main.rs".into(),
-                    session_id: Some("some_rust_session_unique_id".into()),
                     contents: "#[main]\nfn main() {\n  todo!()\n }".into(),
                     overwrite: None,
                     create_directories: None,
@@ -76,7 +71,6 @@ impl WithExamples for Write {
                 description: "Intentionally overwriting a file",
                 item: Self {
                     path: "/some/absolute/path/src/main.rs".into(),
-                    session_id: None,
                     contents: "#[main]\nfn main() {\n  todo!()\n }".into(),
                     overwrite: Some(true),
                     create_directories: Some(false),
@@ -87,7 +81,6 @@ impl WithExamples for Write {
                 description: "Appending to a file",
                 item: Self {
                     path: "/some/absolute/path/tests/tests.rs".into(),
-                    session_id: None,
                     contents: "\n\n#[test]\nfn another_test() {\n  assert!(true)\n }".into(),
                     overwrite: None,
                     create_directories: None,
@@ -161,7 +154,7 @@ impl Write {
 
 impl Tool<FsTools> for Write {
     fn execute(self, state: &mut FsTools) -> Result<String> {
-        let path = state.resolve_path(&self.path, self.session_id.as_deref())?;
+        let path = state.resolve_path(&self.path, None)?;
         if self.create_directories() {
             if let Some(parent_dir) = path.parent() {
                 fs::create_dir_all(parent_dir).with_context(|| {

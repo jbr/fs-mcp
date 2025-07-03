@@ -24,10 +24,6 @@ pub struct Search {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
 
-    /// Optional session identifier for context
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-
     /// Case sensitive search
     /// Default: false
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,7 +136,6 @@ impl WithExamples for Search {
                 item: Self {
                     pattern: "fn main".to_string(),
                     path: Some("src/".to_string()),
-                    session_id: Some("rust_project".to_string()),
                     case_sensitive: Some(false),
                     include_extensions: Some(vec!["rs".to_string()]),
                     max_results: Some(10),
@@ -153,7 +148,6 @@ impl WithExamples for Search {
                 item: Self {
                     pattern: "TODO|FIXME".to_string(),
                     path: None,
-                    session_id: Some("project".to_string()),
                     case_sensitive: Some(false),
                     include_extensions: None,
                     max_results: Some(20),
@@ -166,7 +160,6 @@ impl WithExamples for Search {
                 item: Self {
                     pattern: "error".to_string(),
                     path: Some("src/".to_string()),
-                    session_id: None,
                     case_sensitive: Some(false),
                     include_extensions: None,
                     max_results: Some(15),
@@ -180,10 +173,7 @@ impl WithExamples for Search {
 
 impl Tool<FsTools> for Search {
     fn execute(self, state: &mut FsTools) -> Result<String> {
-        let search_path = state.resolve_path(
-            self.path.as_deref().unwrap_or("."),
-            self.session_id.as_deref(),
-        )?;
+        let search_path = state.resolve_path(self.path.as_deref().unwrap_or("."), None)?;
 
         let matcher = RegexMatcherBuilder::new()
             .case_insensitive(!self.case_sensitive())

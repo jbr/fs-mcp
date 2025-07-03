@@ -17,10 +17,6 @@ pub struct Move {
     /// Can be absolute, or relative to session context path.
     pub destination: String,
 
-    /// Optional session identifier for context
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-
     /// Overwrite destination file if it exists
     /// Only use if you have recently read the file and intend to replace it.
     /// Default: false
@@ -41,7 +37,6 @@ impl WithExamples for Move {
                 item: Self {
                     source: "src/tool.rs".into(),
                     destination: "src/tool/mod.rs".into(),
-                    session_id: Some("some_rust_session_unique_id".into()),
                     overwrite: None,
                     create_directories: Some(true),
                 },
@@ -51,7 +46,6 @@ impl WithExamples for Move {
                 item: Self {
                     source: "/some/absolute/path/src/main.rs".into(),
                     destination: "/some/absolute/path/src/lib.rs".into(),
-                    session_id: None,
                     overwrite: Some(true),
                     create_directories: None,
                 },
@@ -72,8 +66,8 @@ impl Move {
 
 impl Tool<FsTools> for Move {
     fn execute(self, state: &mut FsTools) -> Result<String> {
-        let source = state.resolve_path(&self.source, self.session_id.as_deref())?;
-        let destination = state.resolve_path(&self.destination, self.session_id.as_deref())?;
+        let source = state.resolve_path(&self.source, None)?;
+        let destination = state.resolve_path(&self.destination, None)?;
 
         if destination.exists() && !self.overwrite() {
             return Err(anyhow!(
