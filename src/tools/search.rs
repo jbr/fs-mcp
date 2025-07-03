@@ -2,7 +2,7 @@ use crate::tools::FsTools;
 use anyhow::{Context, Result};
 use grep::matcher::Matcher;
 use grep::regex::RegexMatcherBuilder;
-use grep::searcher::{SearcherBuilder, sinks::UTF8};
+// Removed unused imports: SearcherBuilder and UTF8 sink
 use mcplease::{
     traits::{Tool, WithExamples},
     types::Example,
@@ -48,6 +48,11 @@ pub struct Search {
     /// Default: "box"
     #[serde(default)]
     pub highlight_style: HighlightStyle,
+
+    /// Number of context lines to show before and after each match
+    /// Default: 1
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_lines: Option<usize>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema, Clone, Copy)]
@@ -140,6 +145,7 @@ impl WithExamples for Search {
                     include_extensions: Some(vec!["rs".to_string()]),
                     max_results: Some(10),
                     highlight_style: HighlightStyle::Box,
+                    context_lines: None,
                 },
             },
             Example {
@@ -152,10 +158,11 @@ impl WithExamples for Search {
                     include_extensions: None,
                     max_results: Some(20),
                     highlight_style: HighlightStyle::Emphasis,
+                    context_lines: None,
                 },
             },
             Example {
-                description: "Search with ANSI color highlighting",
+                description: "Search with ANSI color highlighting and 2 lines of context",
                 item: Self {
                     pattern: "error".to_string(),
                     path: Some("src/".to_string()),
@@ -164,6 +171,7 @@ impl WithExamples for Search {
                     include_extensions: None,
                     max_results: Some(15),
                     highlight_style: HighlightStyle::Ansi,
+                    context_lines: Some(2),
                 },
             },
         ]
@@ -199,6 +207,10 @@ impl Search {
         self.highlight_style
     }
 
+    fn context_lines(&self) -> usize {
+        self.context_lines.unwrap_or(1)
+    }
+
     fn search_with_matcher(&self, search_path: &Path, matcher: impl Matcher) -> Result<String> {
         let mut results = Vec::new();
         let mut total_matches = 0;
@@ -232,12 +244,43 @@ impl Search {
                 let highlighted_content =
                     highlight_style.highlight(&result.line_content, &self.pattern, case_sensitive);
 
+                // Add context before if available
+                for (i, context_line) in result.context_before.iter().enumerate() {
+                    let context_line_num =
+                        result.line_number - (result.context_before.len() - i) as u64;
+                    output.push_str(&format!(
+                        "{}:{}: {}\n",
+                        result.file_path,
+                        context_line_num,
+                        context_line.trim()
+                    ));
+                }
+
+                // Add the matched line
                 output.push_str(&format!(
                     "{}:{}: {}\n",
                     result.file_path,
                     result.line_number,
                     highlighted_content.trim()
                 ));
+
+                // Add context after if available
+                for (i, context_line) in result.context_after.iter().enumerate() {
+                    let context_line_num = result.line_number + (i + 1) as u64;
+                    output.push_str(&format!(
+                        "{}:{}: {}\n",
+                        result.file_path,
+                        context_line_num,
+                        context_line.trim()
+                    ));
+                }
+
+                // Add separator between results if context lines are shown
+                if self.context_lines() > 0
+                    && (!result.context_before.is_empty() || !result.context_after.is_empty())
+                {
+                    output.push_str("--\n");
+                }
             }
 
             if total_matches > max_results {
@@ -299,27 +342,58 @@ impl Search {
         total_matches: &mut usize,
         max_results: usize,
     ) -> Result<()> {
-        let mut searcher = SearcherBuilder::new().build();
+        let content = std::fs::read_to_string(file_path)
+            .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
 
-        // Use a simpler approach - collect matches directly
-        searcher.search_path(
-            matcher,
-            file_path,
-            UTF8(|line_num, line_content| {
-                if *total_matches >= max_results {
-                    return Ok(false); // Stop searching
-                }
+        let lines: Vec<&str> = content.lines().collect();
+        let context_lines = self.context_lines();
+
+        for (line_idx, line) in lines.iter().enumerate() {
+            if *total_matches >= max_results {
+                break;
+            }
+
+            let line_number = (line_idx + 1) as u64;
+
+            // Check if this line matches
+            let match_result = matcher.find(line.as_bytes());
+            if match_result
+                .map_err(|e| anyhow::anyhow!("Matcher error: {}", e))?
+                .is_some()
+            {
+                // Collect context before
+                let context_before = if context_lines > 0 {
+                    let start = line_idx.saturating_sub(context_lines);
+                    lines[start..line_idx]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
+                // Collect context after
+                let context_after = if context_lines > 0 {
+                    let end = (line_idx + 1 + context_lines).min(lines.len());
+                    lines[line_idx + 1..end]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
 
                 results.push(SearchResult {
                     file_path: file_path.display().to_string(),
-                    line_number: line_num,
-                    line_content: line_content.to_string(),
+                    line_number,
+                    line_content: line.to_string(),
+                    context_before,
+                    context_after,
                 });
 
                 *total_matches += 1;
-                Ok(true)
-            }),
-        )?;
+            }
+        }
 
         Ok(())
     }
@@ -379,4 +453,6 @@ struct SearchResult {
     file_path: String,
     line_number: u64,
     line_content: String,
+    context_before: Vec<String>,
+    context_after: Vec<String>,
 }
