@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::{io::Read as _, path::Path};
 
 /// Read utf8 contents from a file. Non-utf8 characters will be replaced lossily
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, clap::Args)]
 #[serde(rename = "read")]
 pub struct Read {
     /// Path or paths to read
@@ -18,6 +18,7 @@ pub struct Read {
     /// Max length in bytes to read. Will truncate response and indicate truncation.
     /// Final character may be a replacement character if truncated mid code point
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     pub max_length: Option<usize>,
 }
 

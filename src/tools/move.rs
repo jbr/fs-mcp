@@ -1,5 +1,6 @@
 use crate::tools::FsTools;
 use anyhow::{Result, anyhow};
+use clap::ArgAction;
 use mcplease::{
     traits::{Tool, WithExamples},
     types::Example,
@@ -7,7 +8,7 @@ use mcplease::{
 use serde::{Deserialize, Serialize};
 
 /// Move a file from one location to another
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, clap::Args)]
 #[serde(rename = "move")]
 pub struct Move {
     /// Path to move from
@@ -21,11 +22,13 @@ pub struct Move {
     /// Only use if you have recently read the file and intend to replace it.
     /// Default: false
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, action = ArgAction::SetTrue)]
     pub overwrite: Option<bool>,
 
     /// Create any directories leading up to the destination path if they don't already exist
     /// Default: true
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, action = ArgAction::SetTrue)]
     pub create_directories: Option<bool>,
 }
 

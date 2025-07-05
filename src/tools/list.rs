@@ -1,5 +1,6 @@
 use crate::tools::FsTools;
 use anyhow::{Result, anyhow};
+use clap::ArgAction;
 use glob::Pattern;
 use ignore::{Walk, WalkBuilder};
 use mcplease::{
@@ -12,8 +13,9 @@ use size::Size;
 use std::path::Path;
 
 /// List file system contents with session context support, globbing and gitignore
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, clap::Args)]
 #[serde(rename = "list")]
+#[group(skip)]
 pub struct List {
     /// Directory path or glob pattern.
     /// Can be absolute, or relative to session context path. Can include wildcards like 'src/**/*'.
@@ -25,15 +27,18 @@ pub struct List {
     /// Defaults to true (setting to false will show gitignored files)
     /// When `recursive` is true, gitignored files will always be hidden
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, action = ArgAction::SetTrue)]
     pub gitignore: Option<bool>,
 
     /// Recurse into directories (only relevant if path does not contain a glob pattern)
     ///
     /// When `recursive` is true, gitignored files will always be hidden
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, action = ArgAction::SetTrue)]
     pub recursive: Option<bool>,
 
     /// Include metadata like file size and last modified
+    #[arg(long, action = ArgAction::SetTrue)]
     pub include_metadata: Option<bool>,
 }
 

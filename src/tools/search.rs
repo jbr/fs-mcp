@@ -1,5 +1,6 @@
 use crate::tools::FsTools;
 use anyhow::{Context, Result};
+use clap::ArgAction;
 use grep::matcher::Matcher;
 use grep::regex::RegexMatcherBuilder;
 // Removed unused imports: SearcherBuilder and UTF8 sink
@@ -12,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Search for text patterns in files using ripgrep-like functionality
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, clap::Args)]
 #[serde(rename = "search")]
+#[group(skip)]
 pub struct Search {
     /// Pattern to search for (supports regex)
     pub pattern: String,
@@ -27,31 +29,37 @@ pub struct Search {
     /// Case sensitive search
     /// Default: false
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, action = ArgAction::SetTrue)]
     pub case_sensitive: Option<bool>,
 
     /// File extensions to include (e.g., ["rs", "js", "py"])
     /// If not specified, searches all text files
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     pub include_extensions: Option<Vec<String>>,
 
     /// Maximum number of results to return
     /// Default: 50
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     pub max_results: Option<usize>,
 
     /// Highlight style for matches in output
     /// Options: "none", "box", "emphasis", "ansi", "markdown"
     /// Default: "box"
+    #[arg(value_enum)]
     #[serde(default)]
+    #[arg(long)]
     pub highlight_style: HighlightStyle,
 
     /// Number of context lines to show before and after each match
     /// Default: 1
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     pub context_lines: Option<usize>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, JsonSchema, Clone, Copy)]
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema, Clone, Copy, clap::ValueEnum)]
 pub enum HighlightStyle {
     #[serde(rename = "none")]
     None,

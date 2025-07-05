@@ -1,5 +1,6 @@
 use crate::tools::FsTools;
 use anyhow::{Context, Result, anyhow};
+use clap::ArgAction;
 use mcplease::{
     traits::{Tool, WithExamples},
     types::Example,
@@ -15,8 +16,9 @@ use std::{
 ///
 /// Usage recommendation: For very large files, you may want to use multiple append operations
 /// if you encounter interruption issues.
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, clap::Args)]
 #[serde(rename = "write")]
+#[group(skip)]
 pub struct Write {
     /// Path to write to
     /// Can be absolute, or relative to session context path.
@@ -33,6 +35,7 @@ pub struct Write {
     ///
     /// Default: false
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, action = ArgAction::SetTrue)]
     pub overwrite: Option<bool>,
 
     /// Append to existing file
@@ -42,6 +45,7 @@ pub struct Write {
     ///
     /// Default: false
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, action = ArgAction::SetTrue)]
     pub append: Option<bool>,
 
     /// Create any directories leading up to this file if they don't already exist.
@@ -51,6 +55,7 @@ pub struct Write {
     ///
     /// Default: true
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, action = ArgAction::SetTrue)]
     pub create_directories: Option<bool>,
 }
 
