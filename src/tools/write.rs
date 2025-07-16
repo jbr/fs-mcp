@@ -18,7 +18,6 @@ use std::{
 /// if you encounter interruption issues.
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, clap::Args)]
 #[serde(rename = "write")]
-#[group(skip)]
 pub struct Write {
     /// Path to write to
     /// Can be absolute, or relative to session context path.

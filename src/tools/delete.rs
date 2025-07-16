@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 /// Remove a file from disk
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, clap::Args)]
 #[serde(rename = "delete")]
-#[group(skip)]
 pub struct Delete {
     /// Path to delete
     /// Can be absolute, or relative to working directory.

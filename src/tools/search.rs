@@ -15,7 +15,6 @@ use std::path::Path;
 /// Search for text patterns in files using ripgrep-like functionality
 #[derive(Debug, Serialize, Deserialize, JsonSchema, clap::Args)]
 #[serde(rename = "search")]
-#[group(skip)]
 pub struct Search {
     /// Pattern to search for (supports regex)
     pub pattern: String,
