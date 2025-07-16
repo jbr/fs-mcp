@@ -1,5 +1,6 @@
 use crate::tools::FsTools;
 use anyhow::{Result, anyhow};
+use clap::ArgAction;
 use mcplease::{
     traits::{Tool, WithExamples},
     types::Example,
@@ -7,7 +8,7 @@ use mcplease::{
 use serde::{Deserialize, Serialize};
 
 /// Move a file from one location to another
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, clap::Args)]
 #[serde(rename = "move")]
 pub struct Move {
     /// Path to move from
@@ -17,19 +18,17 @@ pub struct Move {
     /// Can be absolute, or relative to session context path.
     pub destination: String,
 
-    /// Optional session identifier for context
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-
     /// Overwrite destination file if it exists
     /// Only use if you have recently read the file and intend to replace it.
     /// Default: false
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, action = ArgAction::SetTrue)]
     pub overwrite: Option<bool>,
 
     /// Create any directories leading up to the destination path if they don't already exist
     /// Default: true
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, action = ArgAction::SetTrue)]
     pub create_directories: Option<bool>,
 }
 
@@ -41,7 +40,6 @@ impl WithExamples for Move {
                 item: Self {
                     source: "src/tool.rs".into(),
                     destination: "src/tool/mod.rs".into(),
-                    session_id: Some("some_rust_session_unique_id".into()),
                     overwrite: None,
                     create_directories: Some(true),
                 },
@@ -51,7 +49,6 @@ impl WithExamples for Move {
                 item: Self {
                     source: "/some/absolute/path/src/main.rs".into(),
                     destination: "/some/absolute/path/src/lib.rs".into(),
-                    session_id: None,
                     overwrite: Some(true),
                     create_directories: None,
                 },
@@ -72,8 +69,8 @@ impl Move {
 
 impl Tool<FsTools> for Move {
     fn execute(self, state: &mut FsTools) -> Result<String> {
-        let source = state.resolve_path(&self.source, self.session_id.as_deref())?;
-        let destination = state.resolve_path(&self.destination, self.session_id.as_deref())?;
+        let source = state.resolve_path(&self.source, None)?;
+        let destination = state.resolve_path(&self.destination, None)?;
 
         if destination.exists() && !self.overwrite() {
             return Err(anyhow!(

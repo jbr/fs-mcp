@@ -1,5 +1,6 @@
 use crate::tools::FsTools;
 use anyhow::{Result, anyhow};
+use clap::ArgAction;
 use glob::Pattern;
 use ignore::{Walk, WalkBuilder};
 use mcplease::{
@@ -11,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use size::Size;
 use std::path::Path;
 
-/// List file system contents with session context support, globbing and gitignore
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+/// List file system contents with session context support and globbing
+#[derive(Debug, Serialize, Deserialize, JsonSchema, clap::Args)]
 #[serde(rename = "list")]
 pub struct List {
     /// Directory path or glob pattern.
@@ -20,24 +21,13 @@ pub struct List {
     /// Defaults to the current session context if not provided
     pub path: Option<String>,
 
-    /// Optional session identifier for context
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-
-    /// Hide gitignored files.
-    ///
-    /// Defaults to true (setting to false will show gitignored files)
-    /// When `recursive` is true, gitignored files will always be hidden
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gitignore: Option<bool>,
-
     /// Recurse into directories (only relevant if path does not contain a glob pattern)
-    ///
-    /// When `recursive` is true, gitignored files will always be hidden
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, action = ArgAction::SetTrue)]
     pub recursive: Option<bool>,
 
     /// Include metadata like file size and last modified
+    #[arg(long, action = ArgAction::SetTrue)]
     pub include_metadata: Option<bool>,
 }
 
@@ -48,8 +38,6 @@ impl WithExamples for List {
                 description: "Finding all rust files within a project, having already set context. Include metadata",
                 item: Self {
                     path: Some("src/**/*.rs".into()),
-                    session_id: Some("some_rust_session_unique_id".into()),
-                    gitignore: None,
                     recursive: None,
                     include_metadata: Some(true),
                 },
@@ -58,8 +46,6 @@ impl WithExamples for List {
                 description: "recursively showing all files by absolute path",
                 item: Self {
                     path: Some("/some/absolute/path".into()),
-                    session_id: None,
-                    gitignore: None,
                     recursive: Some(true),
                     include_metadata: None,
                 },
@@ -73,7 +59,7 @@ impl Tool<FsTools> for List {
         // Parse path to separate directory from glob pattern
         let (base_path, pattern) = self.parse_path_and_pattern()?;
 
-        let base_path = state.resolve_path(base_path, self.session_id.as_deref())?;
+        let base_path = state.resolve_path(base_path, None)?;
 
         if !base_path.is_dir() {
             return Err(anyhow!("Path is not a directory: {}", base_path.display()));
@@ -135,20 +121,16 @@ impl List {
     }
 
     fn build_walk(&self, base_path: &Path, glob_pattern: Option<&Pattern>) -> Walk {
-        // Use ignore crate's WalkBuilder for proper gitignore support
         let mut walker = WalkBuilder::new(base_path);
         if glob_pattern.is_none() && !self.recursive() {
             walker.max_depth(Some(1));
         }
 
-        walker.hidden(false);
-
-        if !self.gitignore() {
-            walker
-                .git_ignore(false)
-                .git_global(false)
-                .git_exclude(false);
-        }
+        walker
+            .hidden(false)
+            .git_ignore(true)
+            .git_global(true)
+            .git_exclude(true);
 
         // Add glob pattern filtering if provided
         if let Some(pattern) = glob_pattern.cloned() {
@@ -159,10 +141,6 @@ impl List {
         }
 
         walker.build()
-    }
-
-    fn gitignore(&self) -> bool {
-        !self.recursive() && self.gitignore.unwrap_or(true)
     }
 
     fn include_metadata(&self) -> bool {
