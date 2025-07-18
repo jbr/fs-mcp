@@ -2,6 +2,13 @@
 name = "fs-mcp"
 version = "0.1.0"
 edition = "2024"
+description = "mcp server for filesystem access"
+readme = "README.md"
+repository = "https://github.com/jbr/cargo-mcp"
+documentation = "https://docs.rs/cargo-mcp"
+license = "MIT OR Apache-2.0"
+keywords = ["mcp"]
+categories = []
 
 [dependencies]
 anyhow = "1.0"
@@ -24,9 +31,3 @@ shellexpand = "3.1.1"
 size = "0.5.0"
 tempfile = "3.20"
 timeago = "0.5.0"
-
-# [patch.crates-io]
-# mcplease = { path = "../mcplease" }
-
-
-
