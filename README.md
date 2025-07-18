@@ -1,92 +1,52 @@
 # fs-mcp
 
-A filesystem MCP (Model Context Protocol) server designed specifically for AI collaboration, with session support and respectful user experience design.
+A filesystem MCP (Model Context Protocol)
 
-## Features
-
-### Core Functionality
-- **Session-aware operations**: Persistent context that survives MCP server restarts
-- **Context management**: Set working directories per session for relative path operations
-- **Gitignore awareness**: Respects `.gitignore` by default, with override options
-- **Educational UX**: Provides helpful guidance about session management
-
-### Design Principles
-- **Respectful tooling**: No session amnesia - state persists across restarts
-- **Low frustration**: Clear error messages and helpful guidance
-- **AI-first design**: Interface designed specifically for AI collaboration patterns
-
-## Usage
-
-### Setting Context
-```json
-{
-  "name": "set_context",
-  "arguments": {
-    "path": "/path/to/project",
-    "session_id": "my_project_work"
-  }
-}
+## Tools
+```
+  delete                 Remove a file from disk
+  list                   List file system contents with session context support and globbing
+  move                   Move a file from one location to another
+  set-working-directory  Set the working context path
+  search                 Search for text patterns in files using ripgrep-like functionality
+  write                  Write contents to a file, optionally creating any directories needed
+  read                   Read utf8 contents from a file. Non-utf8 characters will be replaced lossily
+  help                   Print this message or the help of the given subcommand(s)
 ```
 
-### Listing Directories
-```json
-{
-  "name": "list_directory",
-  "arguments": {
-    "path": "./src",
-    "session_id": "my_project_work",
-    "include_gitignore": false
-  }
-}
-```
-
-## Session Management
-
-Sessions provide isolated contexts for filesystem operations:
-- Each session has its own working directory context
-- Sessions persist to disk automatically (`~/.ai-tools/sessions/fs/`)
-- Use meaningful session IDs for better organization
-- Sessions survive MCP server restarts
-
-## Architecture
-
-### Session Store
-Generic session storage system (`SessionStore<T>`) that:
-- Handles persistence and serialization automatically
-- Manages session lifecycle (creation, updates, cleanup)
-- Provides thread-safe access to session data
-- Could be extracted as a reusable component for other MCP tools
-
-### File System Tools
-- Context-aware path resolution
-- Gitignore integration (basic implementation)
-- Extensible for additional filesystem operations
-
-## Development
+## Installation
 
 ```bash
-# Build
-cargo build
-
-# Test
-cargo test
-
-# Run
-cargo run
+$ cargo install fs-mcp
 ```
 
-## Future Enhancements
+## Usage with Claude Desktop
 
-### Planned Features
-- **Glob patterns**: `src/**/*.rs` style directory listing
-- **Advanced gitignore**: Full gitignore spec support
-- **Content filtering**: `--text-only`, `--exclude-tests`, `--max-size` flags
-- **File operations**: Read, write, move, delete with session context
-- **Cross-tool sessions**: Shared session context across multiple MCP tools
+Add this to your Claude Desktop MCP configuration:
 
-### Session Store Extraction
-The `SessionStore<T>` component is designed to be extracted into a separate crate for reuse across MCP tools, enabling consistent session management patterns.
+```json
+{
+  "mcpServers": {
+    "fs-mcp": {
+      "command": "/path/to/fs-mcp/fs-mcp",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
 
 ## License
 
-[Add your license here]
+<sup>
+Licensed under either of <a href="LICENSE-APACHE">Apache License, Version
+2.0</a> or <a href="LICENSE-MIT">MIT license</a> at your option.
+</sup>
+
+---
+
+<sub>
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
+be dual licensed as above, without any additional terms or conditions.
+</sub>
