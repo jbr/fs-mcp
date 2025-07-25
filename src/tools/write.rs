@@ -1,5 +1,5 @@
 use crate::tools::FsTools;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, bail};
 use clap::ArgAction;
 use mcplease::{
     traits::{Tool, WithExamples},
@@ -158,11 +158,13 @@ impl Write {
 
 impl Tool<FsTools> for Write {
     fn execute(self, state: &mut FsTools) -> Result<String> {
-        let path = state.resolve_path(&self.path, None)?;
+        let path = state
+            .resolve_path(&self.path, None)
+            .with_context(|| format!("Failed to resolve {}", self.path))?;
         if self.create_directories() {
             if let Some(parent_dir) = path.parent() {
                 fs::create_dir_all(parent_dir).with_context(|| {
-                    format!("trying to create directories for {}", parent_dir.display())
+                    format!("Failed to create directories for {}", parent_dir.display())
                 })?;
             }
         }
@@ -173,7 +175,7 @@ impl Tool<FsTools> for Write {
 
         // For append operations, read the tail before writing for seam display
         let tail_content = if self.append() {
-            Self::read_file_tail(&path, 3)?
+            Self::read_file_tail(&path, 3).unwrap_or_default()
         } else {
             String::new()
         };
@@ -197,14 +199,16 @@ impl Tool<FsTools> for Write {
                     ));
                 }
 
-                Err(e) => return Err(anyhow!(e)),
+                Err(e) => bail!("Failed to open {} for writing: {e}", path.display()),
                 Ok(file) => file,
             };
 
-            file.write_all(self.contents.as_bytes())?;
+            file.write_all(self.contents.as_bytes())
+                .with_context(|| format!("Failed to write to {}", path.display()))?;
         }
 
-        let metadata = fs::metadata(&path)?;
+        let metadata = fs::metadata(&path)
+            .with_context(|| format!("Failed to get metadata for {}", path.display()))?;
         let size = Size::from_bytes(metadata.len());
 
         let mut result = format!(
