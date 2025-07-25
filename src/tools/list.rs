@@ -126,7 +126,7 @@ impl List {
             walker.max_depth(Some(1));
         }
 
-        walker.standard_filters(true).hidden(false);
+        walker.standard_filters(true);
 
         // Add glob pattern filtering if provided
         if let Some(pattern) = glob_pattern.cloned() {
