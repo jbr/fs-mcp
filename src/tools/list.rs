@@ -126,11 +126,7 @@ impl List {
             walker.max_depth(Some(1));
         }
 
-        walker
-            .hidden(false)
-            .git_ignore(true)
-            .git_global(true)
-            .git_exclude(true);
+        walker.standard_filters(true).hidden(false);
 
         // Add glob pattern filtering if provided
         if let Some(pattern) = glob_pattern.cloned() {
