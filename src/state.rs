@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -49,12 +49,12 @@ impl FsTools {
         let path = PathBuf::from(&*shellexpand::tilde(path_str));
 
         if path.is_absolute() {
-            return Ok(path);
+            return Ok(fs::canonicalize(path)?);
         }
 
         let session_id = session_id.unwrap_or_else(|| self.default_session_id());
         match self.get_context(Some(session_id))? {
-            Some(context) => Ok(context.join(path_str)),
+            Some(context) => Ok(fs::canonicalize(context.join(path_str))?),
             None => Err(anyhow!(
                 "Use set_working_directory first or provide an absolute path.",
             )),
