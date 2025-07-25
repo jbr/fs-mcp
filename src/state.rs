@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,33 @@ pub struct FsTools {
     /// Shared context store for cross-server communication
     #[fieldwork(get, get_mut)]
     shared_context_store: SessionStore<SharedContextData>,
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut components = path.components().peekable();
+    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
+        components.next();
+        PathBuf::from(c.as_os_str())
+    } else {
+        PathBuf::new()
+    };
+
+    for component in components {
+        match component {
+            Component::Prefix(..) => unreachable!(),
+            Component::RootDir => {
+                ret.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                ret.pop();
+            }
+            Component::Normal(c) => {
+                ret.push(c);
+            }
+        }
+    }
+    ret
 }
 
 impl FsTools {
@@ -49,12 +76,13 @@ impl FsTools {
         let path = PathBuf::from(&*shellexpand::tilde(path_str));
 
         if path.is_absolute() {
-            return Ok(fs::canonicalize(path)?);
+            return Ok(normalize_path(&path));
         }
 
         let session_id = session_id.unwrap_or_else(|| self.default_session_id());
+
         match self.get_context(Some(session_id))? {
-            Some(context) => Ok(fs::canonicalize(context.join(path_str))?),
+            Some(context) => Ok(normalize_path(&context.join(path_str))),
             None => Err(anyhow!(
                 "Use set_working_directory first or provide an absolute path.",
             )),
