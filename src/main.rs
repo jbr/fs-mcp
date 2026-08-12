@@ -7,7 +7,7 @@ mod tools;
 mod tests;
 
 use anyhow::Result;
-use mcplease::server_info;
+use mcplease::{ServerConfig, server_info};
 use state::FsTools;
 
 const INSTRUCTIONS: &str = "Filesystem operations. Use set_working_directory to use relative paths";
@@ -15,5 +15,8 @@ const INSTRUCTIONS: &str = "Filesystem operations. Use set_working_directory to 
 fn main() -> Result<()> {
     let mut state = FsTools::new()?;
 
-    mcplease::run::<tools::Tools, _>(&mut state, server_info!(), Some(INSTRUCTIONS))
+    mcplease::run::<tools::Tools, _>(
+        &mut state,
+        ServerConfig::new(server_info!()).with_instructions(INSTRUCTIONS),
+    )
 }

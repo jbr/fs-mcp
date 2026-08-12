@@ -1,8 +1,8 @@
 use crate::tools::FsTools;
 use anyhow::Result;
 use mcplease::{
-    traits::{Tool, WithExamples},
-    types::Example,
+    traits::{Tool, ToolMeta},
+    types::{Example, RequestContext, ToolAnnotations},
 };
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,22 @@ pub struct SetWorkingDirectory {
     path: String,
 }
 
-impl WithExamples for SetWorkingDirectory {
+impl ToolMeta for SetWorkingDirectory {
+    fn title() -> Option<&'static str> {
+        Some("Set working directory")
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(ToolAnnotations {
+            // Writes session state, not files.
+            read_only_hint: Some(false),
+            destructive_hint: Some(false),
+            idempotent_hint: Some(true),
+            open_world_hint: Some(false),
+            ..Default::default()
+        })
+    }
+
     fn examples() -> Vec<Example<Self>> {
         vec![Example {
             description: "setting context to a development project",
@@ -26,7 +41,9 @@ impl WithExamples for SetWorkingDirectory {
 }
 
 impl Tool<FsTools> for SetWorkingDirectory {
-    fn execute(self, state: &mut FsTools) -> Result<String> {
+    type Output = String;
+
+    fn execute(self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
         let new_context_path = state.resolve_path(&self.path, None)?;
         let response = format!("Set context to {}", new_context_path.display());
         state.set_working_directory(new_context_path, None)?;

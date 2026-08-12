@@ -2,8 +2,8 @@ use crate::tools::FsTools;
 use anyhow::{Result, anyhow};
 use clap::ArgAction;
 use mcplease::{
-    traits::{Tool, WithExamples},
-    types::Example,
+    traits::{Tool, ToolMeta},
+    types::{Example, RequestContext, ToolAnnotations},
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +32,23 @@ pub struct Move {
     pub create_directories: Option<bool>,
 }
 
-impl WithExamples for Move {
+impl ToolMeta for Move {
+    fn title() -> Option<&'static str> {
+        Some("Move file")
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(ToolAnnotations {
+            read_only_hint: Some(false),
+            // Removes the source, and with `overwrite` replaces the destination.
+            destructive_hint: Some(true),
+            // A second move of the same source fails: it is no longer there.
+            idempotent_hint: Some(false),
+            open_world_hint: Some(false),
+            ..Default::default()
+        })
+    }
+
     fn examples() -> Vec<Example<Self>> {
         vec![
             Example {
@@ -68,7 +84,9 @@ impl Move {
 }
 
 impl Tool<FsTools> for Move {
-    fn execute(self, state: &mut FsTools) -> Result<String> {
+    type Output = String;
+
+    fn execute(self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
         let source = state.resolve_path(&self.source, None)?;
         let destination = state.resolve_path(&self.destination, None)?;
 

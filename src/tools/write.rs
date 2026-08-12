@@ -2,8 +2,8 @@ use crate::tools::FsTools;
 use anyhow::{Context, Result, bail};
 use clap::ArgAction;
 use mcplease::{
-    traits::{Tool, WithExamples},
-    types::Example,
+    traits::{Tool, ToolMeta},
+    types::{Example, RequestContext, ToolAnnotations},
 };
 use serde::{Deserialize, Serialize};
 use size::Size;
@@ -55,7 +55,23 @@ pub struct Write {
     pub create_directories: Option<bool>,
 }
 
-impl WithExamples for Write {
+impl ToolMeta for Write {
+    fn title() -> Option<&'static str> {
+        Some("Write file")
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(ToolAnnotations {
+            read_only_hint: Some(false),
+            // `overwrite` replaces an existing file's contents outright.
+            destructive_hint: Some(true),
+            // Repeating an `append` write appends again.
+            idempotent_hint: Some(false),
+            open_world_hint: Some(false),
+            ..Default::default()
+        })
+    }
+
     fn examples() -> Vec<Example<Self>> {
         vec![
             Example {
@@ -154,7 +170,9 @@ impl Write {
 }
 
 impl Tool<FsTools> for Write {
-    fn execute(self, state: &mut FsTools) -> Result<String> {
+    type Output = String;
+
+    fn execute(self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
         let path = state
             .resolve_path(&self.path, None)
             .with_context(|| format!("Failed to resolve {}", self.path))?;

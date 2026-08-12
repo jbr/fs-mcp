@@ -4,8 +4,8 @@ use clap::ArgAction;
 use glob::Pattern;
 use ignore::{Walk, WalkBuilder};
 use mcplease::{
-    traits::{Tool, WithExamples},
-    types::Example,
+    traits::{Tool, ToolMeta},
+    types::{Example, RequestContext, ToolAnnotations},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,19 @@ pub struct List {
     pub include_metadata: Option<bool>,
 }
 
-impl WithExamples for List {
+impl ToolMeta for List {
+    fn title() -> Option<&'static str> {
+        Some("List directory")
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(ToolAnnotations {
+            read_only_hint: Some(true),
+            open_world_hint: Some(false),
+            ..Default::default()
+        })
+    }
+
     fn examples() -> Vec<Example<Self>> {
         vec![
             Example {
@@ -60,7 +72,9 @@ impl WithExamples for List {
 }
 
 impl Tool<FsTools> for List {
-    fn execute(self, state: &mut FsTools) -> Result<String> {
+    type Output = String;
+
+    fn execute(self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
         // Parse path to separate directory from glob pattern
         let (base_path, pattern) = self.parse_path_and_pattern()?;
 

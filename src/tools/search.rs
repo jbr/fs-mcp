@@ -6,8 +6,8 @@ use grep::regex::RegexMatcherBuilder;
 use ignore::WalkBuilder;
 // Removed unused imports: SearcherBuilder and UTF8 sink
 use mcplease::{
-    traits::{Tool, WithExamples},
-    types::Example,
+    traits::{Tool, ToolMeta},
+    types::{Example, RequestContext, ToolAnnotations},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -143,7 +143,19 @@ impl HighlightStyle {
     }
 }
 
-impl WithExamples for Search {
+impl ToolMeta for Search {
+    fn title() -> Option<&'static str> {
+        Some("Search file contents")
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(ToolAnnotations {
+            read_only_hint: Some(true),
+            open_world_hint: Some(false),
+            ..Default::default()
+        })
+    }
+
     fn examples() -> Vec<Example<Self>> {
         vec![
             Example {
@@ -187,7 +199,9 @@ impl WithExamples for Search {
 }
 
 impl Tool<FsTools> for Search {
-    fn execute(self, state: &mut FsTools) -> Result<String> {
+    type Output = String;
+
+    fn execute(self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
         let search_path = state.resolve_path(self.path.as_deref().unwrap_or("."), None)?;
 
         let matcher = RegexMatcherBuilder::new()

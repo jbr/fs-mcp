@@ -1,8 +1,8 @@
 use crate::tools::FsTools;
 use anyhow::{Context, Result, anyhow};
 use mcplease::{
-    traits::{Tool, WithExamples},
-    types::Example,
+    traits::{Tool, ToolMeta},
+    types::{Example, RequestContext, ToolAnnotations},
 };
 use serde::{Deserialize, Serialize};
 use std::{io::Read as _, path::Path};
@@ -32,7 +32,19 @@ pub struct Read {
     pub to_line: Option<usize>,
 }
 
-impl WithExamples for Read {
+impl ToolMeta for Read {
+    fn title() -> Option<&'static str> {
+        Some("Read files")
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(ToolAnnotations {
+            read_only_hint: Some(true),
+            open_world_hint: Some(false),
+            ..Default::default()
+        })
+    }
+
     fn examples() -> Vec<Example<Self>> {
         vec![
             Example {
@@ -71,7 +83,9 @@ impl WithExamples for Read {
 }
 
 impl Tool<FsTools> for Read {
-    fn execute(self, state: &mut FsTools) -> Result<String> {
+    type Output = String;
+
+    fn execute(self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
         let separator = std::iter::repeat_with(fastrand::alphanumeric)
             .take(10)
             .collect::<String>();
