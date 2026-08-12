@@ -13,9 +13,6 @@ use std::{
 };
 
 /// Write contents to a file, optionally creating any directories needed
-///
-/// Usage recommendation: For very large files, you may want to use multiple append operations
-/// if you encounter interruption issues.
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, clap::Args)]
 #[serde(rename = "write")]
 pub struct Write {

@@ -12,7 +12,12 @@ use serde::{Deserialize, Serialize};
 use size::Size;
 use std::path::Path;
 
-/// List file system contents with session context support and globbing
+/// List directory contents — recursive listing, glob patterns, optional metadata.
+///
+/// Gitignore-aware: skips paths matched by `.gitignore` and hidden entries like
+/// `.git/`, so the output is the project's tracked tree rather than the whole
+/// filesystem (e.g. `target/`, `node_modules/` are omitted). Prefer this over
+/// shelling out to `ls`/`find` for orienting in a repository.
 #[derive(Debug, Serialize, Deserialize, JsonSchema, clap::Args)]
 #[serde(rename = "list")]
 pub struct List {

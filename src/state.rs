@@ -63,6 +63,20 @@ impl FsTools {
         })
     }
 
+    /// Construct with an **in-memory** session store (no disk, no cross-process
+    /// sharing) and the working directory pre-seeded — for in-process embedding
+    /// (e.g. the efference harness). Unlike [`new`](Self::new), this does not
+    /// touch the shared `~/.ai-tools` store, so embedding never clobbers other
+    /// mcplease servers' session state.
+    #[allow(dead_code, reason = "used by library consumers (embedding), not the bin")]
+    pub fn embedded(working_directory: PathBuf) -> Result<Self> {
+        let mut tools = Self {
+            shared_context_store: SessionStore::new(None)?,
+        };
+        tools.set_working_directory(working_directory, None)?;
+        Ok(tools)
+    }
+
     fn default_session_id(&self) -> &'static str {
         "default"
     }
