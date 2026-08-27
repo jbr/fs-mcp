@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A `write` this server refuses now preserves the body it was given and returns a retry token; sending that token back as `contents`, paired with the flag the refusal asked for, writes the same text. Covers both refusals that used to drop a body — the already-exists check and the `append`/`overwrite` conflict. The token is a digest of the contents, sentinel-prefixed (`write-retry-`) so ordinary file text can never be mistaken for one and an identical re-send names the same body; it is single-use, in-memory, and holds at most 8 bodies. Nothing advertises it except a refusal, so it costs nothing in the tool description until the case fires.
+
 ### Changed
 
 - `search` groups matches under one path header per file instead of repeating the absolute path on every printed line (matches and context alike). 27–47% fewer bytes on real searches. The header is absolute so an entry stays valid to paste into a following call; a non-contiguous block within one file keeps its `--` marker.

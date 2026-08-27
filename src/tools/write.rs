@@ -222,7 +222,23 @@ impl Write {
 impl Tool<FsTools> for Write {
     type Output = String;
 
-    fn execute(self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
+    fn execute(mut self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
+        // A token as `contents` stands in for the body of a write this server
+        // refused earlier: "the text I sent when this was refused, and yes I
+        // meant it". The path and flags come from *this* call; only the text
+        // comes from state. The protocol is progressive reveal — it is
+        // described nowhere except in a refusal, so it costs nothing in the
+        // tool description until the scenario fires.
+        if let Some(rejected) = state.take_rejected_write(&self.contents) {
+            self.contents = rejected.contents;
+        } else if crate::state::is_rejected_write_token(&self.contents) {
+            bail!(
+                "`{}` names no preserved write — it was already confirmed, or \
+                 this server restarted since the refusal. Send the full contents.",
+                self.contents
+            );
+        }
+
         let path = state
             .resolve_path(&self.path, None)
             .with_context(|| format!("Failed to resolve {}", self.path))?;
@@ -235,7 +251,16 @@ impl Tool<FsTools> for Write {
         }
 
         if self.append() && self.overwrite() {
-            return Ok("`overwrite` and `append` are mutually exclusive. No filesystem operation has been performed".into());
+            // The body would otherwise be dropped and the model left to
+            // regenerate it from memory — where drift sets in. Preserve it.
+            let token =
+                state.preserve_rejected_write(path.clone(), std::mem::take(&mut self.contents));
+            return Ok(format!(
+                "`overwrite` and `append` are mutually exclusive. No filesystem operation has \
+                 been performed.\n\n\
+                 Your contents are preserved under `{token}`: repeat the call with only one of \
+                 the two flags and \"contents\": \"{token}\" to write the same text."
+            ));
         }
 
         // For append operations, read the tail before writing for seam display
@@ -282,9 +307,18 @@ impl Tool<FsTools> for Write {
         {
             let mut file = match open_options.open(&path) {
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                    // Same preserve-not-drop contract as the flag conflict
+                    // above: the refusal is a confirmation question, and the
+                    // answer should not cost the model a regeneration.
+                    let bytes = self.contents.len();
+                    let token = state
+                        .preserve_rejected_write(path.clone(), std::mem::take(&mut self.contents));
                     return Ok(format!(
                         "File {} already exists, use \"overwrite\": true if you intend to replace it, \
-                         or \"append\": true if you intend to add content to the end of the file.",
+                         or \"append\": true if you intend to add content to the end of the file.\n\n\
+                         Your {bytes} bytes of contents are preserved under `{token}`: repeat the \
+                         call with \"overwrite\": true and \"contents\": \"{token}\" to confirm this \
+                         exact write.",
                         path.display()
                     ));
                 }
@@ -472,4 +506,113 @@ mod test {
         );
     }
 
+    /// The refusal that used to drop the body now returns a token, and the
+    /// retry with `overwrite: true` plus that token writes the exact text —
+    /// the regeneration-with-drift failure mode this closes.
+    #[test]
+    fn rejected_write_is_retryable_by_token_without_regenerating() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("notes.txt"), "old\n").unwrap();
+
+        let body = "line one\nline two\nline three\n";
+        // one state across refusal and retry — the stash lives there
+        let mut state = tools(root);
+        let refusal = call(&mut state, "notes.txt", body, None, None).unwrap();
+        assert!(
+            !refusal.contains("Successfully"),
+            "the write was refused: {refusal}"
+        );
+        // the message names the token inline; pull it out of the message
+        let token = refusal
+            .split("preserved under `")
+            .nth(1)
+            .and_then(|rest| rest.split('`').next())
+            .unwrap()
+            .to_string();
+        assert!(token.starts_with(crate::state::REJECTED_WRITE_PREFIX));
+
+        let confirmed = call(&mut state, "notes.txt", &token, Some(true), None).unwrap();
+        assert!(confirmed.contains("Successfully wrote"), "{confirmed}");
+        assert_eq!(fs::read_to_string(root.join("notes.txt")).unwrap(), body);
+    }
+
+    /// The flag-conflict refusal preserves the body too — it dropped it the
+    /// same way the overwrite refusal did.
+    #[test]
+    fn mutual_exclusion_refusal_preserves_the_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let body = "append me\n";
+        // one state across refusal and retry — the stash lives there
+        let mut state = tools(root);
+        let refusal = call(&mut state, "new.txt", body, Some(true), Some(true)).unwrap();
+        assert!(refusal.contains("mutually exclusive"), "{refusal}");
+        let token = refusal
+            .split("preserved under `")
+            .nth(1)
+            .and_then(|rest| rest.split('`').next())
+            .unwrap()
+            .to_string();
+
+        let confirmed = call(&mut state, "new.txt", &token, Some(true), None).unwrap();
+        assert!(confirmed.contains("Successfully"), "{confirmed}");
+        assert_eq!(fs::read_to_string(root.join("new.txt")).unwrap(), body);
+    }
+
+    /// A token-shaped `contents` naming nothing is an error that says what
+    /// happened and how to recover — not a silent literal write of the token.
+    #[test]
+    fn expired_or_unknown_token_is_reported_not_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let err = call(
+            &mut tools(root),
+            "x.txt",
+            "write-retry-0123456789abcdef",
+            Some(true),
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("names no preserved write"),
+            "{err}"
+        );
+
+        // single-use: after a confirmed retry, the same token names nothing
+        fs::write(root.join("y.txt"), "old\n").unwrap();
+        let mut state = tools(root);
+        let refusal = call(&mut state, "y.txt", "body\n", None, None).unwrap();
+        let token = refusal
+            .split("preserved under `")
+            .nth(1)
+            .and_then(|rest| rest.split('`').next())
+            .unwrap()
+            .to_string();
+        call(&mut state, "y.txt", &token, Some(true), None).unwrap();
+        let err = call(&mut state, "y.txt", &token, Some(true), None).unwrap_err();
+        assert!(err.to_string().contains("names no preserved write"));
+    }
+
+    /// Content that merely resembles a token (sentinel without a digest) is
+    /// written literally — only exact-shaped strings are protocol.
+    #[test]
+    fn content_starting_with_the_sentinel_is_written_literally() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let out = call(
+            &mut tools(root),
+            "hashes.txt",
+            "write-retry- is mentioned in these notes\n",
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(out.contains("Successfully"), "{out}");
+        assert_eq!(
+            fs::read_to_string(root.join("hashes.txt")).unwrap(),
+            "write-retry- is mentioned in these notes\n"
+        );
+    }
 }
