@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `write` is atomic when replacing an existing file: contents go to a sibling temp file which is then renamed over the target, so a concurrent reader observes the old bytes or the new bytes and never the transiently empty or partial middle that `truncate(true)` exposed. The original's permissions are carried onto the replacement, since rename swaps the inode. `append` and exclusive-create keep their existing paths — routing append through a copy would make it O(file) and invent a lost-update race, and the exclusive-create open *is* the existence check the already-exists refusal relies on.
+- `write` with `overwrite: true` creates a file that does not exist yet instead of failing with ENOENT. The branch opened with `truncate` and no `create`, so the one refusal a caller could not act on was the one where the flag it would be told to drop is the flag it already had.
 - `list` accepts brace alternation (`{assets,docs}/**/*.{png,jpg}`): `{` now splits base from pattern, and the matcher is `globset` rather than `glob`, which had no brace support and matched nothing.
 - `list` no longer drops nested matches. Glob filtering pruned the walk, but a directory does not match a pattern naming files, so `src/**/*.rs` returned only the files directly under `src` — 28 of 246 in one repository — as a listing that looked complete. The pattern is applied per entry instead, against the path relative to the base.
 

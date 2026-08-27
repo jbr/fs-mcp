@@ -267,7 +267,14 @@ impl Tool<FsTools> for Write {
         if self.append() {
             open_options.create(true).append(true);
         } else if self.overwrite() {
-            open_options.write(true).truncate(true);
+            // `create(true)`, not just truncate: `overwrite` answers "there may
+            // be a file there and I mean to replace it", which is true of a path
+            // that turns out to be empty. Without it the call failed with ENOENT
+            // on a path that did not exist yet — a refusal the caller cannot act
+            // on, since the flag it would be told to drop is the one it already
+            // has. (The existing-file case never reaches here; it is replaced
+            // through the atomic rename path above.)
+            open_options.write(true).create(true).truncate(true);
         } else {
             open_options.write(true).create_new(true);
         }
@@ -347,6 +354,19 @@ mod test {
         let out = call(&mut tools(root), "notes.txt", "new\n", Some(true), None).unwrap();
         assert!(out.contains("Successfully"), "{out}");
         assert_eq!(fs::read_to_string(root.join("notes.txt")).unwrap(), "new\n");
+    }
+
+    /// `overwrite: true` against a path that does not exist yet **creates** it.
+    /// The branch opened with `truncate` alone, so it failed with ENOENT — and
+    /// the refusal was unactionable, since the flag a caller would be told to
+    /// drop is the one it already had.
+    #[test]
+    fn overwrite_creates_a_file_that_does_not_exist_yet() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let out = call(&mut tools(root), "fresh.txt", "new\n", Some(true), None).unwrap();
+        assert!(out.contains("Successfully"), "{out}");
+        assert_eq!(fs::read_to_string(root.join("fresh.txt")).unwrap(), "new\n");
     }
 
     /// Rename replaces the directory entry, so the new inode carries the temp
