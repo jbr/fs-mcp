@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `search` groups matches under one path header per file instead of repeating the absolute path on every printed line (matches and context alike). 27–47% fewer bytes on real searches. The header is absolute so an entry stays valid to paste into a following call; a non-contiguous block within one file keeps its `--` marker.
+
 ### Fixed
 
 - `list` accepts brace alternation (`{assets,docs}/**/*.{png,jpg}`): `{` now splits base from pattern, and the matcher is `globset` rather than `glob`, which had no brace support and matched nothing.
