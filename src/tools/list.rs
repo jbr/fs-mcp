@@ -1,7 +1,7 @@
 use crate::tools::FsTools;
 use anyhow::{Result, anyhow};
 use clap::ArgAction;
-use glob::Pattern;
+use globset::{GlobBuilder, GlobMatcher};
 use ignore::{Walk, WalkBuilder};
 use mcplease::{
     traits::{Tool, ToolMeta},
@@ -11,6 +11,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use size::Size;
 use std::path::Path;
+
+#[cfg(test)]
+mod test;
 
 /// List directory contents — recursive listing, glob patterns, optional metadata.
 ///
@@ -84,8 +87,7 @@ impl Tool<FsTools> for List {
             return Err(anyhow!("Path is not a directory: {}", base_path.display()));
         }
 
-        // Compile glob pattern if provided
-        let glob_pattern = pattern.map(Pattern::new).transpose()?;
+        let glob_pattern = pattern.map(compile_glob).transpose()?;
 
         let entries = self.build_entries(&base_path, glob_pattern)?;
 
@@ -106,11 +108,11 @@ impl List {
         let path_str = self.path.as_deref().unwrap_or(".");
 
         // Check if path contains glob patterns
-        if path_str.contains('*') || path_str.contains('?') || path_str.contains('[') {
+        if path_str.contains(is_glob_char) {
             // Extract the directory part (everything before the first glob character)
             let mut split_pos = None;
             for (i, char) in path_str.char_indices() {
-                if char == '*' || char == '?' || char == '[' {
+                if is_glob_char(char) {
                     // Find the last path separator before this position
                     if let Some(sep_pos) = path_str[..i].rfind('/') {
                         split_pos = Some(sep_pos);
@@ -139,22 +141,19 @@ impl List {
         self.recursive.unwrap_or_default()
     }
 
-    fn build_walk(&self, base_path: &Path, glob_pattern: Option<&Pattern>) -> Walk {
+    /// The walk itself is unfiltered when a pattern is present: a directory does
+    /// not match a pattern that names files (`src/foo` against `**/*.rs`), so
+    /// pruning on the pattern cut off every nested match — `src/**/*.rs` returned
+    /// only the files directly in `src`, silently, as a listing that looked
+    /// complete. The pattern is applied per entry in `build_entries` instead;
+    /// gitignore and hidden-file pruning still keep `target/` out of the walk.
+    fn build_walk(&self, base_path: &Path, glob_pattern: Option<&GlobMatcher>) -> Walk {
         let mut walker = WalkBuilder::new(base_path);
         if glob_pattern.is_none() && !self.recursive() {
             walker.max_depth(Some(1));
         }
 
         walker.standard_filters(true);
-
-        // Add glob pattern filtering if provided
-        if let Some(pattern) = glob_pattern.cloned() {
-            let base_path = base_path.to_owned();
-            walker.filter_entry(move |entry| {
-                entry.path() != base_path && pattern.matches_path(entry.path())
-            });
-        }
-
         walker.build()
     }
 
@@ -165,14 +164,26 @@ impl List {
     fn build_entries(
         &self,
         base_path: &Path,
-        glob_pattern: Option<Pattern>,
+        glob_pattern: Option<GlobMatcher>,
     ) -> Result<Vec<String>> {
         let walker = self.build_walk(base_path, glob_pattern.as_ref());
         let mut entries = Vec::new();
         let formatter = timeago::Formatter::new();
         for entry in walker.flatten() {
+            if entry.path() == base_path {
+                continue;
+            }
             let mut file_name =
                 pathdiff::diff_paths(entry.path(), base_path).unwrap_or(entry.path().to_owned());
+
+            // Matched against the path *relative to the base*, which is what the
+            // pattern was written against: the caller wrote `**/*.rs` beside a
+            // base of `src`, not against an absolute path they never typed.
+            if let Some(pattern) = &glob_pattern
+                && !pattern.is_match(&file_name)
+            {
+                continue;
+            }
 
             if entry.file_type().is_some_and(|ft| ft.is_dir()) {
                 file_name.push("");
@@ -193,4 +204,24 @@ impl List {
         entries.sort();
         Ok(entries)
     }
+}
+
+/// The characters that make a path a pattern rather than a directory name.
+/// `{` is here because brace alternation is a common first instinct —
+/// `{assets,docs}/**/*.{png,jpg}` — and without it the whole group was read as a
+/// literal directory and answered "Path is not a directory".
+fn is_glob_char(c: char) -> bool {
+    matches!(c, '*' | '?' | '[' | '{')
+}
+
+/// `globset` rather than `glob`: the latter has no brace alternation at all, so
+/// it compiled `{a,b}` without complaint and then matched nothing.
+/// `literal_separator` keeps `*` from crossing a `/`, so `*.rs` means the files
+/// here and `**/*.rs` means the ones below too.
+fn compile_glob(pattern: &str) -> Result<GlobMatcher> {
+    Ok(GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()
+        .map_err(|e| anyhow!("invalid glob pattern {pattern:?}: {e}"))?
+        .compile_matcher())
 }
