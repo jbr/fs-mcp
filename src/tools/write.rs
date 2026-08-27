@@ -1,5 +1,5 @@
 use crate::tools::FsTools;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, anyhow};
 use clap::ArgAction;
 use mcplease::{
     traits::{Tool, ToolMeta},
@@ -121,6 +121,56 @@ impl Write {
         self.create_directories.unwrap_or(true)
     }
 
+    /// Replace an existing file's contents in one observable step: write a
+    /// sibling temp file, carry the original's permissions onto it, then rename
+    /// over the target. `rename(2)` within a directory is atomic, so every
+    /// reader sees old-or-new and never the empty or half-written middle.
+    ///
+    /// The temp file is a *sibling*, not in `$TMPDIR`: rename is only atomic
+    /// within a filesystem, and a temp dir is routinely on a different one,
+    /// where the call degrades to a copy and the atomicity is silently gone.
+    ///
+    /// Permissions are copied because rename replaces the directory entry — the
+    /// new inode carries the temp file's mode (0600 from `NamedTempFile`), not
+    /// the original's, so an executable script or a group-readable config would
+    /// quietly lose its bits.
+    fn replace_atomically(&self, path: &std::path::Path, tail_content: String) -> Result<String> {
+        let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let mut temp = tempfile::NamedTempFile::new_in(dir).with_context(|| {
+            format!(
+                "Failed to create a temporary file beside {} for an atomic replace",
+                path.display()
+            )
+        })?;
+        temp.write_all(self.contents.as_bytes())
+            .with_context(|| format!("Failed to write to {}", path.display()))?;
+        // Durable before it is visible: the rename can otherwise be ordered
+        // ahead of the data on a crash, leaving the target present but empty.
+        temp.as_file()
+            .sync_all()
+            .with_context(|| format!("Failed to flush the replacement for {}", path.display()))?;
+        if let Ok(metadata) = fs::metadata(path) {
+            let _ = fs::set_permissions(temp.path(), metadata.permissions());
+        }
+        temp.persist(path)
+            .map_err(|e| anyhow!("Failed to replace {}: {}", path.display(), e.error))?;
+
+        let size = Size::from_bytes(
+            fs::metadata(path)
+                .with_context(|| format!("Failed to get metadata for {}", path.display()))?
+                .len(),
+        );
+        let mut result = format!(
+            "Successfully wrote {} bytes to {} (total: {size})",
+            self.contents.len(),
+            path.display()
+        );
+        if self.append() && (!tail_content.is_empty() || !self.contents.is_empty()) {
+            result.push_str(&Self::format_seam_display(&tail_content, &self.contents, 3));
+        }
+        Ok(result)
+    }
+
     fn read_file_tail(path: &std::path::Path, lines: usize) -> Result<String> {
         if !path.exists() {
             return Ok(String::new());
@@ -195,6 +245,24 @@ impl Tool<FsTools> for Write {
             String::new()
         };
 
+        // Replacing an existing file goes through a sibling temp file and a
+        // rename, so a concurrent reader sees the old bytes or the new bytes and
+        // never a state that existed only mid-write. Opening the real path with
+        // `truncate(true)` made the file transiently empty, then partial —
+        // observable by anything holding it open, and not something a reader can
+        // protect itself against.
+        //
+        // Only this branch. `append` must not be rewritten this way: appending
+        // through a temp copy would mean reading the whole file first, turning an
+        // O(added) operation into O(file) and inventing a lost-update race that
+        // the append syscall does not have. And `create_new` is left alone
+        // because its atomicity is load-bearing elsewhere — that single open *is*
+        // the exclusive-existence check the already-exists refusal below depends
+        // on, and a rename cannot make that check and the write one operation.
+        if self.overwrite() && path.exists() {
+            return self.replace_atomically(&path, tail_content);
+        }
+
         let mut open_options = OpenOptions::new();
         if self.append() {
             open_options.create(true).append(true);
@@ -239,4 +307,149 @@ impl Tool<FsTools> for Write {
 
         Ok(result)
     }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use mcplease::traits::Tool as _;
+    use std::path::Path;
+
+    fn tools(root: &Path) -> FsTools {
+        FsTools::embedded(root.to_path_buf()).unwrap()
+    }
+
+    fn call(
+        state: &mut FsTools,
+        path: &str,
+        contents: &str,
+        overwrite: Option<bool>,
+        append: Option<bool>,
+    ) -> Result<String> {
+        Write {
+            path: path.into(),
+            contents: contents.into(),
+            overwrite,
+            append,
+            create_directories: None,
+        }
+        .execute(state, &RequestContext::default())
+    }
+
+    /// An overwrite goes through a rename, so the file's contents change in one
+    /// observable step. This pins the outcome; the concurrency property is
+    /// below.
+    #[test]
+    fn overwrite_replaces_the_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("notes.txt"), "old contents\n").unwrap();
+        let out = call(&mut tools(root), "notes.txt", "new\n", Some(true), None).unwrap();
+        assert!(out.contains("Successfully"), "{out}");
+        assert_eq!(fs::read_to_string(root.join("notes.txt")).unwrap(), "new\n");
+    }
+
+    /// Rename replaces the directory entry, so the new inode carries the temp
+    /// file's mode unless the original's is carried over. Without this an
+    /// executable script silently stops being executable when it is written.
+    #[cfg(unix)]
+    #[test]
+    fn an_overwrite_keeps_the_original_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let path = root.join("run.sh");
+        fs::write(&path, "#!/bin/sh\necho old\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        call(
+            &mut tools(root),
+            "run.sh",
+            "#!/bin/sh\necho new\n",
+            Some(true),
+            None,
+        )
+        .unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755, "the executable bit survived the replace");
+    }
+
+    /// The temp file is a sibling, so it must not survive as a stray entry.
+    #[test]
+    fn an_overwrite_leaves_no_temp_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("notes.txt"), "old\n").unwrap();
+        call(&mut tools(root), "notes.txt", "new\n", Some(true), None).unwrap();
+
+        let entries: Vec<_> = fs::read_dir(root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(entries, vec!["notes.txt".to_string()], "{entries:?}");
+    }
+
+    /// **A reader never observes a state that did not exist as a whole.** The
+    /// truncate-in-place path made the file transiently empty and then partial;
+    /// a reader racing it could see either.
+    ///
+    /// Sound in one direction on purpose: a reader that happens never to land
+    /// inside the window still passes, so this cannot fail spuriously — but with
+    /// `truncate(true)` restored it catches the empty read quickly.
+    #[test]
+    fn a_concurrent_reader_never_sees_a_partial_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let path = root.join("notes.txt");
+        let old = "old\n".repeat(4096);
+        let new = "new\n".repeat(4096);
+        fs::write(&path, &old).unwrap();
+
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let (path, old, new, stop) = (path.clone(), old.clone(), new.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut torn = None;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Ok(seen) = fs::read_to_string(&path)
+                        && seen != old
+                        && seen != new
+                    {
+                        torn = Some(seen.len());
+                        break;
+                    }
+                }
+                torn
+            })
+        };
+
+        let mut state = tools(root);
+        for _ in 0..40 {
+            call(&mut state, "notes.txt", &new, Some(true), None).unwrap();
+            call(&mut state, "notes.txt", &old, Some(true), None).unwrap();
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+
+        assert_eq!(
+            reader.join().unwrap(),
+            None,
+            "a reader observed a file state that never existed as a whole"
+        );
+    }
+
+    /// `append` is deliberately *not* routed through the replace: rewriting it
+    /// that way would mean reading the whole file to add to its end.
+    #[test]
+    fn append_still_adds_to_the_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("log.txt"), "one\n").unwrap();
+        call(&mut tools(root), "log.txt", "two\n", None, Some(true)).unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("log.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+    }
+
 }
