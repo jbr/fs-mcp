@@ -135,7 +135,13 @@ impl Read {
         actual_length: usize,
         separator: &str,
     ) -> Result<String> {
-        let truncated = &full_contents[..max_length];
+        // Walk back to a char boundary: slicing a `str` mid-code-point panics, and
+        // `max_length` is a byte count the caller chose without knowing the encoding.
+        let mut cut = max_length.min(full_contents.len());
+        while cut > 0 && !full_contents.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let truncated = &full_contents[..cut];
         Ok(format!(
             "=={separator} BEGIN TRUNCATED {path}, FULL LENGTH: {actual_length}, TRUNCATED LENGTH: {max_length} {separator}==\n\
             {content}\n\
@@ -155,19 +161,11 @@ impl Read {
         let full_contents = std::fs::read_to_string(&path)
             .with_context(|| format!("Unable to read {}", path.display()))?;
 
-        if let Some(max_length) = self.max_length {
-            let actual_length = full_contents.len();
-            if max_length < actual_length {
-                return self.read_head_from_string(
-                    &path,
-                    &full_contents,
-                    max_length,
-                    actual_length,
-                    separator,
-                );
-            }
-        }
-
+        // The line window is applied *before* `max_length`, because `max_length` is a
+        // size cap on what was asked for, not a substitute for it. Truncating first
+        // silently discarded `from_line`/`to_line` and returned the head of the file —
+        // a caller asking for line 125 with a 20-byte cap got the first 20 bytes of
+        // line 1, with nothing in the response to say so.
         let mut content_to_return = full_contents.clone();
 
         if let Some(from_line) = self.from_line {
@@ -200,11 +198,110 @@ impl Read {
             // But for a tool result, this is generally acceptable.
         }
 
+        let selected_length = content_to_return.len();
+        if let Some(max_length) = self.max_length {
+            if max_length < selected_length {
+                return self.read_head_from_string(
+                    &path,
+                    &content_to_return,
+                    max_length,
+                    selected_length,
+                    separator,
+                );
+            }
+        }
+
         Ok(format!(
             "=={separator} BEGIN {path}, LENGTH: {len} {separator}==\n\
             {content_to_return}\n=={separator} END {path}, LENGTH: {len} {separator}==\n",
             path = path.display(),
             len = full_contents.len(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use mcplease::traits::Tool as _;
+    use std::fs;
+    use std::path::Path;
+
+    fn tools(root: &Path) -> FsTools {
+        FsTools::embedded(root.to_path_buf()).unwrap()
+    }
+
+    fn call(
+        state: &mut FsTools,
+        path: &str,
+        max_length: Option<usize>,
+        from_line: Option<usize>,
+        to_line: Option<usize>,
+    ) -> Result<String> {
+        Read {
+            paths: vec![path.into()],
+            max_length,
+            from_line,
+            to_line,
+        }
+        .execute(state, &RequestContext::default())
+    }
+
+    /// Ten lines, so a window is unambiguous.
+    fn numbered(root: &Path) {
+        let body: String = (1..=10).map(|n| format!("line {n}\n")).collect();
+        fs::write(root.join("f.txt"), body).unwrap();
+    }
+
+    /// `max_length` is a size cap on the region that was asked for, not a
+    /// substitute for it. The two options were evaluated in the wrong order, so
+    /// setting both silently discarded the line window and returned the head of
+    /// the file — a caller asking for line 5 got line 1 with nothing saying so.
+    #[test]
+    fn max_length_caps_the_line_window_rather_than_replacing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        numbered(root);
+        let out = call(&mut tools(root), "f.txt", Some(6), Some(5), None).unwrap();
+        assert!(out.contains("line 5"), "should start at the window: {out}");
+        assert!(!out.contains("line 1\n"), "must not fall back to the head: {out}");
+    }
+
+    /// The window alone is unaffected by the reorder.
+    #[test]
+    fn line_window_without_a_cap_is_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        numbered(root);
+        let out = call(&mut tools(root), "f.txt", None, Some(5), Some(6)).unwrap();
+        assert!(out.contains("line 5") && out.contains("line 6"), "{out}");
+        assert!(!out.contains("line 7"), "{out}");
+    }
+
+    /// A cap alone still truncates from the start of the file.
+    #[test]
+    fn cap_without_a_window_truncates_the_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        numbered(root);
+        let out = call(&mut tools(root), "f.txt", Some(6), None, None).unwrap();
+        assert!(out.contains("TRUNCATED"), "{out}");
+        assert!(out.contains("line 1"), "{out}");
+        assert!(!out.contains("line 3"), "{out}");
+    }
+
+    /// `max_length` is a byte count chosen by a caller who cannot see the
+    /// encoding, so it lands mid-code-point routinely. Slicing a `str` there
+    /// panics — every offset must instead back off to a char boundary.
+    #[test]
+    fn a_cap_inside_a_multibyte_character_does_not_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("u.txt"), "héllo wörld — ünicode\n").unwrap();
+        for cap in 1..=24 {
+            let out = call(&mut tools(root), "u.txt", Some(cap), None, None)
+                .unwrap_or_else(|e| panic!("cap {cap} failed: {e}"));
+            assert!(out.contains("TRUNCATED"), "cap {cap}: {out}");
+        }
     }
 }
