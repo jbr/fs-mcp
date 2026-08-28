@@ -11,8 +11,12 @@ use std::{io::Read as _, path::Path};
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, clap::Args)]
 #[serde(rename = "read")]
 pub struct Read {
-    /// Path or paths to read
+    /// Path or paths to read.
     /// Can be absolute, or relative to session context path.
+    ///
+    /// A path is a path only — a `file.rs:120-160` suffix is not a line range and
+    /// names no file. To read part of a file, pass the plain path and set
+    /// `from_line` / `to_line`.
     pub paths: Vec<String>,
 
     /// Max length in bytes to read. Will truncate response and indicate truncation.
@@ -63,6 +67,15 @@ impl ToolMeta for Read {
                     max_length: Some(100),
                     from_line: None,
                     to_line: None,
+                },
+            },
+            Example {
+                description: "Reading one region of a file — the line range goes in from_line/to_line, never in the path",
+                item: Self {
+                    paths: vec!["src/tools/read.rs".into()],
+                    max_length: None,
+                    from_line: Some(167),
+                    to_line: Some(177),
                 },
             },
             Example {
@@ -151,10 +164,27 @@ impl Read {
         ))
     }
 
-    fn read_file(&self, state: &mut FsTools, path: &str, separator: &str) -> Result<String> {
-        let path = state.resolve_path(path, None)?;
+    fn read_file(&self, state: &mut FsTools, requested: &str, separator: &str) -> Result<String> {
+        let path = state.resolve_path(requested, None)?;
 
         if !path.exists() {
+            // `src/project.rs:578-700` is what a model writes when it wants a
+            // region and hasn't found `from_line`/`to_line`; observed six times in
+            // one session, each a hard "does not exist" that taught nothing. The
+            // path is still wrong — the suffix names no file — so this stays an
+            // error, but it names the option that answers the request.
+            if let Some((base, from, to)) = line_suffix(requested) {
+                let base_path = state.resolve_path(base, None)?;
+                if base_path.exists() {
+                    let to = to.map(|t| format!(", to_line: {t}")).unwrap_or_default();
+                    return Err(anyhow!(
+                        "{} does not exist. A `:line-range` suffix is part of no filename — \
+                         to read that region, call read with paths: [{base:?}], from_line: \
+                         {from}{to}",
+                        path.display(),
+                    ));
+                }
+            }
             return Err(anyhow!("{} does not exist", path.display()));
         }
 
@@ -167,6 +197,7 @@ impl Read {
         // a caller asking for line 125 with a 20-byte cap got the first 20 bytes of
         // line 1, with nothing in the response to say so.
         let mut content_to_return = full_contents.clone();
+        let mut window = None;
 
         if let Some(from_line) = self.from_line {
             let lines: Vec<&str> = full_contents.lines().collect();
@@ -194,6 +225,7 @@ impl Read {
             }
 
             content_to_return = lines[start..=end].join("\n");
+            window = Some((start + 1, end + 1));
             // If the original file didn't end with a newline, joining might add one or lose context.
             // But for a tool result, this is generally acceptable.
         }
@@ -211,12 +243,36 @@ impl Read {
             }
         }
 
+        // The window rides *after* `LENGTH:` so the sentinel's path field is
+        // unchanged: efference's transcript parsers take the path as everything
+        // between ` BEGIN ` and `, LENGTH:` (docs/tui.md), and adding a field there
+        // would silently change what they read a path as. Stating the range is what
+        // makes a windowed read re-targetable — a line number in the result and a
+        // line number in an `edit` mean the same thing.
+        let lines = window
+            .map(|(from, to)| format!(", LINES: {from}-{to}"))
+            .unwrap_or_default();
         Ok(format!(
-            "=={separator} BEGIN {path}, LENGTH: {len} {separator}==\n\
-            {content_to_return}\n=={separator} END {path}, LENGTH: {len} {separator}==\n",
+            "=={separator} BEGIN {path}, LENGTH: {len}{lines} {separator}==\n\
+            {content_to_return}\n=={separator} END {path}, LENGTH: {len}{lines} {separator}==\n",
             path = path.display(),
             len = full_contents.len(),
         ))
+    }
+}
+
+/// Split a `path:120-160` / `path:120` request into `(path, from, to)`, or `None`
+/// when the string has no such suffix. Purely lexical: a real filename ending in
+/// `:digits` would parse this way too, which is why the caller only consults it on
+/// a path that does not exist and only to word the error.
+fn line_suffix(requested: &str) -> Option<(&str, usize, Option<usize>)> {
+    let (base, suffix) = requested.rsplit_once(':')?;
+    if base.is_empty() {
+        return None;
+    }
+    match suffix.split_once('-') {
+        Some((from, to)) => Some((base, from.parse().ok()?, Some(to.parse().ok()?))),
+        None => Some((base, suffix.parse().ok()?, None)),
     }
 }
 
@@ -288,6 +344,64 @@ mod test {
         assert!(out.contains("TRUNCATED"), "{out}");
         assert!(out.contains("line 1"), "{out}");
         assert!(!out.contains("line 3"), "{out}");
+    }
+
+    /// A windowed read states its range in the sentinel, so a line number in the
+    /// result and a line number in a later `edit` mean the same thing. It rides
+    /// after `LENGTH:` because the path field is what the transcript parsers read.
+    #[test]
+    fn a_windowed_read_states_its_range_in_the_sentinel() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        numbered(root);
+        let out = call(&mut tools(root), "f.txt", None, Some(5), Some(6)).unwrap();
+        assert!(out.contains(", LINES: 5-6 "), "{out}");
+        let begin = out.lines().next().unwrap();
+        let path = begin.split(" BEGIN ").nth(1).unwrap().split(", LENGTH:").next().unwrap();
+        assert!(path.ends_with("f.txt"), "path field unchanged: {path:?}");
+    }
+
+    /// A whole-file read says nothing about lines.
+    #[test]
+    fn an_unwindowed_read_has_no_range_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        numbered(root);
+        let out = call(&mut tools(root), "f.txt", None, None, None).unwrap();
+        assert!(!out.contains("LINES:"), "{out}");
+    }
+
+    /// `src/project.rs:578-700` is what a model writes when it wants a region and
+    /// hasn't found `from_line`/`to_line`. The path is still wrong, so it still
+    /// errors — but the error names the option that answers the request.
+    #[test]
+    fn a_line_range_suffix_is_answered_with_the_option_that_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        numbered(root);
+        let out = call(&mut tools(root), "f.txt:5-6", None, None, None).unwrap();
+        assert!(out.contains("BEGIN ERROR"), "still an error: {out}");
+        assert!(out.contains("from_line: 5"), "{out}");
+        assert!(out.contains("to_line: 6"), "{out}");
+    }
+
+    /// A path that simply doesn't exist keeps the plain error — no invented advice.
+    #[test]
+    fn an_ordinary_missing_path_is_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let out = call(&mut tools(root), "nope.txt", None, None, None).unwrap();
+        assert!(out.contains("does not exist"), "{out}");
+        assert!(!out.contains("from_line"), "{out}");
+    }
+
+    #[test]
+    fn line_suffix_only_parses_a_numeric_tail() {
+        assert_eq!(line_suffix("a/b.rs:5-9"), Some(("a/b.rs", 5, Some(9))));
+        assert_eq!(line_suffix("a/b.rs:5"), Some(("a/b.rs", 5, None)));
+        assert_eq!(line_suffix("a/b.rs"), None);
+        assert_eq!(line_suffix("a/b:c.rs"), None);
+        assert_eq!(line_suffix(":5"), None);
     }
 
     /// `max_length` is a byte count chosen by a caller who cannot see the

@@ -60,7 +60,7 @@ pub struct Search {
     pub highlight_style: HighlightStyle,
 
     /// Number of context lines to show before and after each match
-    /// Default: 1
+    /// Default: 3
     #[serde(skip_serializing_if = "Option::is_none")]
     #[arg(long)]
     pub context_lines: Option<usize>,
@@ -226,8 +226,18 @@ impl Search {
         self.highlight_style
     }
 
+    /// Default context. At 1, finding a complete definition reliably needed a
+    /// second `read` — the tell being sessions that searched, then immediately
+    /// re-read the same file around the hit. 3 is the smallest default that
+    /// usually carries a signature plus its opening lines.
+    ///
+    /// The alternative the backlog weighed — a `--whole-item` mode returning the
+    /// syntactically complete enclosing block — is not offered here: it needs a
+    /// per-language parser, and this crate deliberately has none (the walk and the
+    /// matcher are `ignore` + `grep`, both line-oriented). Whole-item selection
+    /// lives where the ASTs already do, in the edit tools.
     fn context_lines(&self) -> usize {
-        self.context_lines.unwrap_or(1)
+        self.context_lines.unwrap_or(3)
     }
 
     fn search_with_matcher(&self, search_path: &Path, matcher: impl Matcher) -> Result<String> {
@@ -673,6 +683,24 @@ mod tests {
         fs::write(root.join("keep.txt"), "needle\n").unwrap();
         let out = run(&search_for("needle"), root);
         assert!(out.contains("keep.txt"), "search completed past the binary: {out}");
+    }
+
+    /// The default context is 3 lines on each side, not 1: at 1, finding a
+    /// complete definition reliably needed a second `read`.
+    #[test]
+    fn the_default_context_is_three_lines_each_side() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let body: String = (1..=11).map(|n| format!("line {n}\n")).collect();
+        fs::write(root.join("a.txt"), body.replace("line 6", "needle here")).unwrap();
+
+        let mut search = search_for("needle");
+        search.context_lines = None;
+        let out = run(&search, root);
+        for expected in ["3: line 3", "6: needle here", "9: line 9"] {
+            assert!(out.contains(expected), "{expected:?} in: {out}");
+        }
+        assert!(!out.contains("2: line 2"), "bounded at 3: {out}");
     }
 
     #[test]

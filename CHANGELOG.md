@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `list` prefixes every entry with the request's path as written, so an entry can be
+  passed straight back to another call instead of resolving against a header stated once
+  (`assets/**/*` now answers `assets/themes/…`).
+- `list --summary` annotates markdown files with their frontmatter `description`, first
+  heading, or first line of prose.
+- `search`'s default `context_lines` is 3 rather than 1.
+- `read` states a windowed read's line range in its sentinel, and a `path:120-160` request
+  is answered by naming `from_line`/`to_line` rather than a bare "does not exist".
+
 ### Added
 
 - A `write` this server refuses now preserves the body it was given and returns a retry token; sending that token back as `contents`, paired with the flag the refusal asked for, writes the same text. Covers both refusals that used to drop a body — the already-exists check and the `append`/`overwrite` conflict. The token is a digest of the contents, sentinel-prefixed (`write-retry-`) so ordinary file text can never be mistaken for one and an identical re-send names the same body; it is single-use, in-memory, and holds at most 8 bodies. Nothing advertises it except a refusal, so it costs nothing in the tool description until the case fires.
