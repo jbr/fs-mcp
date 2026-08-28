@@ -255,12 +255,15 @@ impl Tool<FsTools> for Write {
             // regenerate it from memory — where drift sets in. Preserve it.
             let token =
                 state.preserve_rejected_write(path.clone(), std::mem::take(&mut self.contents));
-            return Ok(format!(
+            // A refusal is returned as an error, not as a successful result carrying
+            // refusal text: a caller that reads only the first line of a success
+            // otherwise reads a write that did not happen as one that did.
+            bail!(
                 "`overwrite` and `append` are mutually exclusive. No filesystem operation has \
                  been performed.\n\n\
                  Your contents are preserved under `{token}`: repeat the call with only one of \
                  the two flags and \"contents\": \"{token}\" to write the same text."
-            ));
+            );
         }
 
         // For append operations, read the tail before writing for seam display
@@ -313,14 +316,17 @@ impl Tool<FsTools> for Write {
                     let bytes = self.contents.len();
                     let token = state
                         .preserve_rejected_write(path.clone(), std::mem::take(&mut self.contents));
-                    return Ok(format!(
+                    // Errors, for the same reason as the flag conflict above: nothing
+                    // was written, and the retry token is only actionable if the caller
+                    // reads the body as a refusal.
+                    bail!(
                         "File {} already exists, use \"overwrite\": true if you intend to replace it, \
                          or \"append\": true if you intend to add content to the end of the file.\n\n\
                          Your {bytes} bytes of contents are preserved under `{token}`: repeat the \
                          call with \"overwrite\": true and \"contents\": \"{token}\" to confirm this \
                          exact write.",
                         path.display()
-                    ));
+                    );
                 }
 
                 Err(e) => bail!("Failed to open {} for writing: {e}", path.display()),
@@ -509,6 +515,10 @@ mod test {
     /// The refusal that used to drop the body now returns a token, and the
     /// retry with `overwrite: true` plus that token writes the exact text —
     /// the regeneration-with-drift failure mode this closes.
+    ///
+    /// The refusal arrives as an `Err`, so a caller reading the outcome flag
+    /// alone sees that no file was written; the body (token and all) is the
+    /// error's message.
     #[test]
     fn rejected_write_is_retryable_by_token_without_regenerating() {
         let dir = tempfile::tempdir().unwrap();
@@ -518,10 +528,18 @@ mod test {
         let body = "line one\nline two\nline three\n";
         // one state across refusal and retry — the stash lives there
         let mut state = tools(root);
-        let refusal = call(&mut state, "notes.txt", body, None, None).unwrap();
+        let refusal = call(&mut state, "notes.txt", body, None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(refusal.contains("already exists"), "{refusal}");
         assert!(
             !refusal.contains("Successfully"),
             "the write was refused: {refusal}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("notes.txt")).unwrap(),
+            "old\n",
+            "the refused write left the file alone"
         );
         // the message names the token inline; pull it out of the message
         let token = refusal
@@ -547,8 +565,14 @@ mod test {
         let body = "append me\n";
         // one state across refusal and retry — the stash lives there
         let mut state = tools(root);
-        let refusal = call(&mut state, "new.txt", body, Some(true), Some(true)).unwrap();
+        let refusal = call(&mut state, "new.txt", body, Some(true), Some(true))
+            .unwrap_err()
+            .to_string();
         assert!(refusal.contains("mutually exclusive"), "{refusal}");
+        assert!(
+            refusal.contains("No filesystem operation has been performed"),
+            "{refusal}"
+        );
         let token = refusal
             .split("preserved under `")
             .nth(1)
@@ -583,7 +607,9 @@ mod test {
         // single-use: after a confirmed retry, the same token names nothing
         fs::write(root.join("y.txt"), "old\n").unwrap();
         let mut state = tools(root);
-        let refusal = call(&mut state, "y.txt", "body\n", None, None).unwrap();
+        let refusal = call(&mut state, "y.txt", "body\n", None, None)
+            .unwrap_err()
+            .to_string();
         let token = refusal
             .split("preserved under `")
             .nth(1)
