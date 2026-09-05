@@ -25,7 +25,9 @@ pub struct Read {
     #[arg(long)]
     pub max_length: Option<usize>,
 
-    /// Start line (1-indexed)
+    /// Start line (1-indexed). When this is past line 1, every returned line is
+    /// prefixed with its file line number and a tab, so positions in the result
+    /// need no offset arithmetic; the prefix is not part of the file's text.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[arg(long)]
     pub from_line: Option<usize>,
@@ -224,7 +226,24 @@ impl Read {
                 ));
             }
 
-            content_to_return = lines[start..=end].join("\n");
+            // A window that starts past line 1 numbers each line with its file
+            // line number. Without the prefix a reader has to add `from_line - 1` to
+            // every position it reasons about, and a model re-targeting the region
+            // was observed adding the offset once and then treating the relative
+            // numbers as absolute (a hung turn and an extra search to reorient).
+            // A window starting at line 1 needs no arithmetic, so it stays bare:
+            // the numbers would only be bytes. Applied before `max_length` so a
+            // truncated offset read is still numbered.
+            content_to_return = if start > 0 {
+                lines[start..=end]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, line)| format!("{}\t{line}", start + 1 + i))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                lines[start..=end].join("\n")
+            };
             window = Some((start + 1, end + 1));
             // If the original file didn't end with a newline, joining might add one or lose context.
             // But for a tool result, this is generally acceptable.
@@ -318,7 +337,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt", Some(6), Some(5), None).unwrap();
+        let out = call(&mut tools(root), "f.txt", Some(8), Some(5), None).unwrap();
         assert!(out.contains("line 5"), "should start at the window: {out}");
         assert!(!out.contains("line 1\n"), "must not fall back to the head: {out}");
     }
@@ -359,6 +378,32 @@ mod test {
         let begin = out.lines().next().unwrap();
         let path = begin.split(" BEGIN ").nth(1).unwrap().split(", LENGTH:").next().unwrap();
         assert!(path.ends_with("f.txt"), "path field unchanged: {path:?}");
+    }
+
+    /// A window starting past line 1 carries each line's file number, so a
+    /// position in the result is a position in the file with no offset to add.
+    /// The cap applies after numbering, so a truncated offset read stays numbered.
+    #[test]
+    fn an_offset_window_numbers_its_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        numbered(root);
+        let out = call(&mut tools(root), "f.txt", None, Some(5), Some(6)).unwrap();
+        assert!(out.contains("\n5\tline 5\n6\tline 6\n"), "{out}");
+        let capped = call(&mut tools(root), "f.txt", Some(8), Some(5), Some(6)).unwrap();
+        assert!(capped.contains("TRUNCATED"), "{capped}");
+        assert!(capped.contains("\n5\tline 5"), "{capped}");
+    }
+
+    /// A window starting at line 1 needs no arithmetic, so its lines stay bare.
+    #[test]
+    fn a_window_from_line_one_stays_bare() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        numbered(root);
+        let out = call(&mut tools(root), "f.txt", None, Some(1), Some(2)).unwrap();
+        assert!(out.contains("\nline 1\nline 2\n"), "{out}");
+        assert!(!out.contains("\t"), "{out}");
     }
 
     /// A whole-file read says nothing about lines.
