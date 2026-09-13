@@ -15,8 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `list --summary` annotates markdown files with their frontmatter `description`, first
   heading, or first line of prose.
 - `search`'s default `context_lines` is 3 rather than 1.
-- `read` states a windowed read's line range in its sentinel, and a `path:120-160` request
-  is answered by naming `from_line`/`to_line` rather than a bare "does not exist".
+- **Breaking:** `read` takes its line range as a suffix on each path rather than as a
+  separate `from_line`/`to_line` pair, which are gone. `paths` is a list but the pair was
+  singular, so a range and a list of paths could not be stated together, and the suffix a
+  model already writes — `src/project.rs:578-700` — was an error. Now each path carries its
+  own range: `path:120-160`, `path:120:160`, `path:L120-L160`, `path#L120-L160`,
+  `path:120..160` and `path:120..=160` all name lines 120 through 160. A lone endpoint runs
+  to the end of the file (`path:120`), and endpoints may count from the end, so `path:-40`
+  is the last 40 lines, `path:..40` the first 40, and `path:120..-10` line 120 through the
+  tenth-from-last. A path that exists on disk is read as itself and never parsed for a
+  range, so a filename containing `:` still works. A start past the end of the file errors
+  with the file's length; an end past it clamps; `path:120:5` — a compiler's line and
+  column — is an empty range, and the error names `path:120` as the read that answers it.
+- `read` states a windowed read's line range in its sentinel, resolved to absolute line
+  numbers whichever end it was counted from.
 
 ### Added
 
