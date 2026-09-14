@@ -395,7 +395,6 @@ dependencies = [
  "log",
  "mcplease",
  "pathdiff",
- "regex",
  "schemars",
  "serde",
  "serde_json",

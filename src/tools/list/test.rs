@@ -1,7 +1,6 @@
 use super::*;
 
 use crate::tools::FsTools;
-use mcplease::traits::Tool as _;
 use mcplease::types::RequestContext;
 use std::fs;
 

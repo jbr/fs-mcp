@@ -359,7 +359,6 @@ impl Tool<FsTools> for Write {
 #[cfg(test)]
 mod test {
     use super::*;
-    use mcplease::traits::Tool as _;
     use std::path::Path;
 
     fn tools(root: &Path) -> FsTools {

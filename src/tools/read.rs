@@ -246,7 +246,6 @@ impl Read {
 #[cfg(test)]
 mod test {
     use super::*;
-    use mcplease::traits::Tool as _;
     use std::fs;
     use std::path::Path;
 
