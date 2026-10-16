@@ -224,9 +224,9 @@ impl Read {
             }
         }
 
-        // The window rides *after* `LENGTH:` so the sentinel's path field is
+        // The window rides *after* `BYTES:` so the sentinel's path field is
         // unchanged: efference's transcript parsers take the path as everything
-        // between ` BEGIN ` and `, LENGTH:` (docs/tui.md), and adding a field there
+        // between ` BEGIN ` and `, LENGTH:` or `, BYTES:` (docs/tui.md), and adding a field there
         // would silently change what they read a path as. Stating the range —
         // resolved to absolute line numbers, whichever end it was counted from —
         // is what makes a windowed read re-targetable: a line number in the result
@@ -234,9 +234,13 @@ impl Read {
         let lines = window
             .map(|(from, to)| format!(", LINES: {from}-{to}"))
             .unwrap_or_default();
+        // `BYTES` names what the number counts (the file's size, not its lines). The
+        // newline before `END` is added only when the content does not end in one,
+        // so a file with a trailing newline does not read as having an empty last line.
+        let close = if content_to_return.ends_with('\n') { "" } else { "\n" };
         Ok(format!(
-            "=={separator} BEGIN {path}, LENGTH: {len}{lines} {separator}==\n\
-            {content_to_return}\n=={separator} END {path}, LENGTH: {len}{lines} {separator}==\n",
+            "=={separator} BEGIN {path}, BYTES: {len}{lines} {separator}==\n\
+            {content_to_return}{close}=={separator} END {path}, BYTES: {len}{lines} {separator}==\n",
             path = path.display(),
             len = full_contents.len(),
         ))
@@ -440,7 +444,7 @@ mod test {
     }
 
     /// A windowed read states its range in the sentinel. It rides after
-    /// `LENGTH:` because the path field is what the transcript parsers read.
+    /// `BYTES:` because the path field is what the transcript parsers read.
     #[test]
     fn a_windowed_read_states_its_range_in_the_sentinel() {
         let dir = tempfile::tempdir().unwrap();
@@ -448,8 +452,27 @@ mod test {
         numbered(root);
         let out = call(&mut tools(root), "f.txt:5-6", None);
         let begin = out.lines().next().unwrap();
-        let path = begin.split(" BEGIN ").nth(1).unwrap().split(", LENGTH:").next().unwrap();
+        let path = begin.split(" BEGIN ").nth(1).unwrap().split(", BYTES:").next().unwrap();
         assert!(path.ends_with("f.txt"), "path field unchanged: {path:?}");
+    }
+
+    /// The frame closes on a fresh line without adding a blank one: a file that
+    /// ends in a newline is not followed by an extra empty line, one that does
+    /// not still gets its `END` on its own line.
+    #[test]
+    fn the_frame_adds_a_closing_newline_only_when_the_content_lacks_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("with.txt"), "red\ngreen\n").unwrap();
+        fs::write(root.join("without.txt"), "red\ngreen").unwrap();
+        let with = call(&mut tools(root), "with.txt", None);
+        let body = with.split_once("==\n").unwrap().1;
+        assert!(body.starts_with("red\ngreen\n=="), "{with}");
+        assert!(with.contains(", BYTES: 10 "), "{with}");
+        let without = call(&mut tools(root), "without.txt", None);
+        let body = without.split_once("==\n").unwrap().1;
+        assert!(body.starts_with("red\ngreen\n=="), "{without}");
+        assert!(without.contains(", BYTES: 9 "), "{without}");
     }
 
     /// A window starting past line 1 carries each line's file number, so a
