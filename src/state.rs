@@ -1,23 +1,111 @@
-use std::path::{Component, Path, PathBuf};
+use std::{
+    collections::{HashMap, VecDeque},
+    path::{Component, Path, PathBuf},
+    sync::{Arc, Mutex, MutexGuard},
+};
 
-use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
+use anyhow::Result;
 
-use mcplease::session::SessionStore;
+/// How many rejected-write bodies to hold at once. One is usually enough (the
+/// retry normally follows the refusal directly), but a burst of rejections
+/// before any retry should not silently drop earlier bodies the model may
+/// still confirm.
+const REJECTED_WRITE_LIMIT: usize = 8;
 
-/// Shared context data that can be used across multiple MCP servers
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct SharedContextData {
-    /// Current working context path
-    pub context_path: Option<PathBuf>,
+/// A rejected write's preserved body. The retry names it by token and supplies
+/// its own path and flags; only the text comes from here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RejectedWrite {
+    pub(crate) path: PathBuf,
+    pub(crate) contents: String,
 }
 
-/// Filesystem tools with session support
-#[derive(Debug, fieldwork::Fieldwork)]
+/// The filesystem tools' shared state, cloned into every call.
+///
+/// There is no working directory to set. MCP has no sessions, so nothing a
+/// call does may change how the next one resolves: a path is absolute, or it
+/// is relative to the root this server was started with — `--root`, else the
+/// process's working directory, or whatever an embedding host passes to
+/// [`FsTools::new`].
+#[derive(Debug, Clone)]
 pub struct FsTools {
-    /// Shared context store for cross-server communication
-    #[fieldwork(get, get_mut)]
-    shared_context_store: SessionStore<SharedContextData>,
+    root: Arc<Path>,
+    /// Bodies of writes this server refused, keyed by the retry token the
+    /// refusal returned (`write.rs`). In-memory only: a restarted server has
+    /// no preserved bodies, and the expired-token message says so.
+    rejected_writes: Arc<Mutex<RejectedWrites>>,
+}
+
+#[derive(Debug, Default)]
+struct RejectedWrites {
+    bodies: HashMap<String, RejectedWrite>,
+    /// Insertion order over `bodies`, so eviction at [`REJECTED_WRITE_LIMIT`]
+    /// drops the oldest rejection deterministically.
+    order: VecDeque<String>,
+}
+
+/// The sentinel every retry token opens with — recognizable on sight, and
+/// shaped so no plausible file body is one.
+pub(crate) const REJECTED_WRITE_PREFIX: &str = "write-retry-";
+
+/// The deterministic stand-in for one preserved body: a digest of the text it
+/// stands for, sentinel-prefixed so ordinary file content can never be mistaken
+/// for one. In-memory state means tokens die with the process anyway, so the
+/// hasher's cross-process stability is irrelevant.
+fn rejected_write_token(contents: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    contents.hash(&mut hasher);
+    format!("{REJECTED_WRITE_PREFIX}{:016x}", hasher.finish())
+}
+
+/// Whether `contents` is shaped exactly like a [`rejected_write_token`] output.
+/// Only a token-shaped string that fails lookup is reported as expired or
+/// unknown; content that merely resembles a token is written literally.
+pub(crate) fn is_rejected_write_token(contents: &str) -> bool {
+    contents
+        .strip_prefix(REJECTED_WRITE_PREFIX)
+        .is_some_and(|digest| digest.len() == 16 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+impl FsTools {
+    /// Preserve the body of a refused write under its retry token, evicting the
+    /// oldest preserved body past [`REJECTED_WRITE_LIMIT`]. Re-preserving an
+    /// identical body (the model re-sends the same write and is refused again)
+    /// keeps its place rather than adding a second entry.
+    pub(crate) fn preserve_rejected_write(&self, path: PathBuf, contents: String) -> String {
+        let token = rejected_write_token(&contents);
+        let mut rejected = self.rejected_writes();
+        if rejected
+            .bodies
+            .insert(token.clone(), RejectedWrite { path, contents })
+            .is_none()
+        {
+            rejected.order.push_back(token.clone());
+        }
+        while rejected.bodies.len() > REJECTED_WRITE_LIMIT {
+            let Some(oldest) = rejected.order.pop_front() else {
+                break;
+            };
+            rejected.bodies.remove(&oldest);
+        }
+        token
+    }
+
+    /// Consume the preserved body named by `token`, if it is still held — the
+    /// token is single-use, and a second use reports it as expired.
+    pub(crate) fn take_rejected_write(&self, token: &str) -> Option<RejectedWrite> {
+        let mut rejected = self.rejected_writes();
+        let entry = rejected.bodies.remove(token)?;
+        rejected.order.retain(|t| t != token);
+        Some(entry)
+    }
+
+    fn rejected_writes(&self) -> MutexGuard<'_, RejectedWrites> {
+        self.rejected_writes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -48,65 +136,28 @@ fn normalize_path(path: &Path) -> PathBuf {
 }
 
 impl FsTools {
-    /// Create a new FsTools instance
-    pub fn new() -> Result<Self> {
-        // Use shared context store for cross-server communication
-        let mut shared_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        shared_path.push(".ai-tools");
-        shared_path.push("sessions");
-        shared_path.push("shared-context.json");
-
-        let shared_context_store = SessionStore::new(Some(shared_path))?;
-
-        Ok(Self {
-            shared_context_store,
-        })
+    /// Tools that resolve relative paths against `root`.
+    pub fn new(root: PathBuf) -> Self {
+        Self {
+            root: normalize_path(&root).into(),
+            rejected_writes: Arc::default(),
+        }
     }
 
-    fn default_session_id(&self) -> &'static str {
-        "default"
-    }
-
-    /// Resolve a path relative to session context if needed
-    pub(crate) fn resolve_path(
-        &mut self,
-        path_str: &str,
-        session_id: Option<&str>,
-    ) -> Result<PathBuf> {
+    /// Resolve a path as a call gave it: `~` expanded, then taken as-is if
+    /// absolute and against the root otherwise.
+    pub(crate) fn resolve_path(&self, path_str: &str) -> PathBuf {
         let path = PathBuf::from(&*shellexpand::tilde(path_str));
-
-        if path.is_absolute() {
-            return Ok(normalize_path(&path));
-        }
-
-        let session_id = session_id.unwrap_or_else(|| self.default_session_id());
-
-        match self.get_context(Some(session_id))? {
-            Some(context) => Ok(normalize_path(&context.join(path_str))),
-            None => Err(anyhow!(
-                "Use set_working_directory first or provide an absolute path.",
-            )),
-        }
+        normalize_path(&self.root.join(path))
     }
 
-    /// Get context for a session
-    pub fn get_context(&mut self, session_id: Option<&str>) -> Result<Option<PathBuf>> {
-        let session_data = self
-            .shared_context_store
-            .get_or_create(session_id.unwrap_or_else(|| self.default_session_id()))?;
-        Ok(session_data.context_path.clone())
-    }
-
-    pub(crate) fn set_working_directory(
-        &mut self,
-        path: PathBuf,
-        session_id: Option<&str>,
-    ) -> Result<()> {
-        self.shared_context_store.update(
-            session_id.unwrap_or_else(|| self.default_session_id()),
-            |shared_data| {
-                shared_data.context_path = Some(path);
-            },
-        )
+    /// Run a tool body on tokio's blocking pool. Every tool here is
+    /// synchronous filesystem work, which must not stall the executor that
+    /// other calls share.
+    pub(crate) async fn unblock<T: Send + 'static>(
+        self,
+        body: impl FnOnce(&Self) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        tokio::task::spawn_blocking(move || body(&self)).await?
     }
 }

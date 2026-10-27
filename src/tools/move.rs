@@ -2,8 +2,8 @@ use crate::tools::FsTools;
 use anyhow::{Result, anyhow};
 use clap::ArgAction;
 use mcplease::{
-    traits::{Tool, WithExamples},
-    types::Example,
+    traits::{Tool, ToolMeta},
+    types::{Example, RequestContext, ToolAnnotations},
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 #[serde(rename = "move")]
 pub struct Move {
     /// Path to move from
-    /// Can be absolute, or relative to session context path.
+    /// Can be absolute, or relative to the server's root directory.
     pub source: String,
     /// Path to move to
-    /// Can be absolute, or relative to session context path.
+    /// Can be absolute, or relative to the server's root directory.
     pub destination: String,
 
     /// Overwrite destination file if it exists
@@ -32,11 +32,27 @@ pub struct Move {
     pub create_directories: Option<bool>,
 }
 
-impl WithExamples for Move {
+impl ToolMeta for Move {
+    fn title() -> Option<&'static str> {
+        Some("Move file")
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(ToolAnnotations {
+            read_only_hint: Some(false),
+            // Removes the source, and with `overwrite` replaces the destination.
+            destructive_hint: Some(true),
+            // A second move of the same source fails: it is no longer there.
+            idempotent_hint: Some(false),
+            open_world_hint: Some(false),
+            ..Default::default()
+        })
+    }
+
     fn examples() -> Vec<Example<Self>> {
         vec![
             Example {
-                description: "Rename a new file relative to a session, creating a directory if needed",
+                description: "Rename a new file relative to the root directory, creating a directory if needed",
                 item: Self {
                     source: "src/tool.rs".into(),
                     destination: "src/tool/mod.rs".into(),
@@ -68,9 +84,17 @@ impl Move {
 }
 
 impl Tool<FsTools> for Move {
-    fn execute(self, state: &mut FsTools) -> Result<String> {
-        let source = state.resolve_path(&self.source, None)?;
-        let destination = state.resolve_path(&self.destination, None)?;
+    type Output = String;
+
+    async fn execute(self, state: FsTools, _context: RequestContext) -> Result<String> {
+        state.unblock(move |state| self.run(state)).await
+    }
+}
+
+impl Move {
+    pub(crate) fn run(self, state: &FsTools) -> Result<String> {
+        let source = state.resolve_path(&self.source);
+        let destination = state.resolve_path(&self.destination);
 
         if destination.exists() && !self.overwrite() {
             return Err(anyhow!(

@@ -5,9 +5,8 @@ A filesystem MCP (Model Context Protocol)
 ## Tools
 ```
   delete                 Remove a file from disk
-  list                   List file system contents with session context support and globbing
+  list                   List file system contents with globbing
   move                   Move a file from one location to another
-  set-working-directory  Set the working context path
   search                 Search for text patterns in files using ripgrep-like functionality
   write                  Write contents to a file, optionally creating any directories needed
   read                   Read utf8 contents from a file. Non-utf8 characters will be replaced lossily
@@ -29,11 +28,14 @@ Add this to your Claude Desktop MCP configuration:
   "mcpServers": {
     "fs-mcp": {
       "command": "/path/to/fs-mcp/fs-mcp",
-      "args": ["serve"]
+      "args": ["serve", "--root", "/path/to/project"]
     }
   }
 }
 ```
+
+Paths are absolute, or relative to the root: `--root` if given, otherwise the directory the server
+was started in.
 
 
 ## License
