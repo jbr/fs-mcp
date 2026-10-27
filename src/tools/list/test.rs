@@ -1,7 +1,6 @@
 use super::*;
 
 use crate::tools::FsTools;
-use mcplease::types::RequestContext;
 use std::fs;
 
 fn list(path: &str) -> List {
@@ -14,9 +13,9 @@ fn list(path: &str) -> List {
 }
 
 fn run(root: &std::path::Path, mut list: List) -> String {
-    let mut state = FsTools::embedded(root.to_path_buf()).unwrap();
+    let state = FsTools::new(root.to_path_buf());
     list.recursive.get_or_insert(true);
-    list.execute(&mut state, &RequestContext::default()).unwrap()
+    list.run(&state).unwrap()
 }
 
 /// A leading brace group used to be read as a literal directory name, so
@@ -115,7 +114,7 @@ fn a_plain_directory_request_prefixes_too() {
 }
 
 /// A request that named no path keeps bare relative entries: those already resolve
-/// against the session working directory, which is what the next call resolves
+/// against the server's root directory, which is what the next call resolves
 /// against too.
 #[test]
 fn a_pathless_request_leaves_entries_bare() {

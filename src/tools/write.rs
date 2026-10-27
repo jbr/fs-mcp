@@ -17,7 +17,7 @@ use std::{
 #[serde(rename = "write")]
 pub struct Write {
     /// Path to write to
-    /// Can be absolute, or relative to session context path.
+    /// Can be absolute, or relative to the server's root directory.
     pub path: String,
 
     /// The full contents of the file, expressed as a utf8 string, or in the case of `append`, the
@@ -75,7 +75,7 @@ impl ToolMeta for Write {
     fn examples() -> Vec<Example<Self>> {
         vec![
             Example {
-                description: "Creating a new file relative to a session",
+                description: "Creating a new file relative to the root directory",
                 item: Self {
                     path: "src/main.rs".into(),
                     contents: "#[main]\nfn main() {\n  todo!()\n }".into(),
@@ -222,7 +222,13 @@ impl Write {
 impl Tool<FsTools> for Write {
     type Output = String;
 
-    fn execute(mut self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
+    async fn execute(self, state: FsTools, _context: RequestContext) -> Result<String> {
+        state.unblock(move |state| self.run(state)).await
+    }
+}
+
+impl Write {
+    pub(crate) fn run(mut self, state: &FsTools) -> Result<String> {
         // A token as `contents` stands in for the body of a write this server
         // refused earlier: "the text I sent when this was refused, and yes I
         // meant it". The path and flags come from *this* call; only the text
@@ -239,9 +245,7 @@ impl Tool<FsTools> for Write {
             );
         }
 
-        let path = state
-            .resolve_path(&self.path, None)
-            .with_context(|| format!("Failed to resolve {}", self.path))?;
+        let path = state.resolve_path(&self.path);
         if self.create_directories() {
             if let Some(parent_dir) = path.parent() {
                 fs::create_dir_all(parent_dir).with_context(|| {
@@ -362,11 +366,11 @@ mod test {
     use std::path::Path;
 
     fn tools(root: &Path) -> FsTools {
-        FsTools::embedded(root.to_path_buf()).unwrap()
+        FsTools::new(root.to_path_buf())
     }
 
     fn call(
-        state: &mut FsTools,
+        state: &FsTools,
         path: &str,
         contents: &str,
         overwrite: Option<bool>,
@@ -379,7 +383,7 @@ mod test {
             append,
             create_directories: None,
         }
-        .execute(state, &RequestContext::default())
+        .run(state)
     }
 
     /// An overwrite goes through a rename, so the file's contents change in one
@@ -390,7 +394,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         fs::write(root.join("notes.txt"), "old contents\n").unwrap();
-        let out = call(&mut tools(root), "notes.txt", "new\n", Some(true), None).unwrap();
+        let out = call(&tools(root), "notes.txt", "new\n", Some(true), None).unwrap();
         assert!(out.contains("Successfully"), "{out}");
         assert_eq!(fs::read_to_string(root.join("notes.txt")).unwrap(), "new\n");
     }
@@ -403,7 +407,7 @@ mod test {
     fn overwrite_creates_a_file_that_does_not_exist_yet() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let out = call(&mut tools(root), "fresh.txt", "new\n", Some(true), None).unwrap();
+        let out = call(&tools(root), "fresh.txt", "new\n", Some(true), None).unwrap();
         assert!(out.contains("Successfully"), "{out}");
         assert_eq!(fs::read_to_string(root.join("fresh.txt")).unwrap(), "new\n");
     }
@@ -422,7 +426,7 @@ mod test {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
 
         call(
-            &mut tools(root),
+            &tools(root),
             "run.sh",
             "#!/bin/sh\necho new\n",
             Some(true),
@@ -440,7 +444,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         fs::write(root.join("notes.txt"), "old\n").unwrap();
-        call(&mut tools(root), "notes.txt", "new\n", Some(true), None).unwrap();
+        call(&tools(root), "notes.txt", "new\n", Some(true), None).unwrap();
 
         let entries: Vec<_> = fs::read_dir(root)
             .unwrap()
@@ -483,10 +487,10 @@ mod test {
             })
         };
 
-        let mut state = tools(root);
+        let state = tools(root);
         for _ in 0..40 {
-            call(&mut state, "notes.txt", &new, Some(true), None).unwrap();
-            call(&mut state, "notes.txt", &old, Some(true), None).unwrap();
+            call(&state, "notes.txt", &new, Some(true), None).unwrap();
+            call(&state, "notes.txt", &old, Some(true), None).unwrap();
         }
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -504,7 +508,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         fs::write(root.join("log.txt"), "one\n").unwrap();
-        call(&mut tools(root), "log.txt", "two\n", None, Some(true)).unwrap();
+        call(&tools(root), "log.txt", "two\n", None, Some(true)).unwrap();
         assert_eq!(
             fs::read_to_string(root.join("log.txt")).unwrap(),
             "one\ntwo\n"
@@ -526,8 +530,8 @@ mod test {
 
         let body = "line one\nline two\nline three\n";
         // one state across refusal and retry — the stash lives there
-        let mut state = tools(root);
-        let refusal = call(&mut state, "notes.txt", body, None, None)
+        let state = tools(root);
+        let refusal = call(&state, "notes.txt", body, None, None)
             .unwrap_err()
             .to_string();
         assert!(refusal.contains("already exists"), "{refusal}");
@@ -549,7 +553,7 @@ mod test {
             .to_string();
         assert!(token.starts_with(crate::state::REJECTED_WRITE_PREFIX));
 
-        let confirmed = call(&mut state, "notes.txt", &token, Some(true), None).unwrap();
+        let confirmed = call(&state, "notes.txt", &token, Some(true), None).unwrap();
         assert!(confirmed.contains("Successfully wrote"), "{confirmed}");
         assert_eq!(fs::read_to_string(root.join("notes.txt")).unwrap(), body);
     }
@@ -563,8 +567,8 @@ mod test {
 
         let body = "append me\n";
         // one state across refusal and retry — the stash lives there
-        let mut state = tools(root);
-        let refusal = call(&mut state, "new.txt", body, Some(true), Some(true))
+        let state = tools(root);
+        let refusal = call(&state, "new.txt", body, Some(true), Some(true))
             .unwrap_err()
             .to_string();
         assert!(refusal.contains("mutually exclusive"), "{refusal}");
@@ -579,7 +583,7 @@ mod test {
             .unwrap()
             .to_string();
 
-        let confirmed = call(&mut state, "new.txt", &token, Some(true), None).unwrap();
+        let confirmed = call(&state, "new.txt", &token, Some(true), None).unwrap();
         assert!(confirmed.contains("Successfully"), "{confirmed}");
         assert_eq!(fs::read_to_string(root.join("new.txt")).unwrap(), body);
     }
@@ -591,7 +595,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let err = call(
-            &mut tools(root),
+            &tools(root),
             "x.txt",
             "write-retry-0123456789abcdef",
             Some(true),
@@ -605,8 +609,8 @@ mod test {
 
         // single-use: after a confirmed retry, the same token names nothing
         fs::write(root.join("y.txt"), "old\n").unwrap();
-        let mut state = tools(root);
-        let refusal = call(&mut state, "y.txt", "body\n", None, None)
+        let state = tools(root);
+        let refusal = call(&state, "y.txt", "body\n", None, None)
             .unwrap_err()
             .to_string();
         let token = refusal
@@ -615,8 +619,8 @@ mod test {
             .and_then(|rest| rest.split('`').next())
             .unwrap()
             .to_string();
-        call(&mut state, "y.txt", &token, Some(true), None).unwrap();
-        let err = call(&mut state, "y.txt", &token, Some(true), None).unwrap_err();
+        call(&state, "y.txt", &token, Some(true), None).unwrap();
+        let err = call(&state, "y.txt", &token, Some(true), None).unwrap_err();
         assert!(err.to_string().contains("names no preserved write"));
     }
 
@@ -627,7 +631,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let out = call(
-            &mut tools(root),
+            &tools(root),
             "hashes.txt",
             "write-retry- is mentioned in these notes\n",
             None,

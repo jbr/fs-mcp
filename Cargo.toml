@@ -12,21 +12,22 @@ categories = []
 
 [dependencies]
 anyhow = "1"
+async-compat = "0.2"
 clap = { version = "4", features = ["derive"] }
-dirs = "7.0"
 env_logger = "0.11"
 fastrand = "2"
-fieldwork = "0.5"
 globset = "0.4"
 grep = "0.4.1"
 ignore = "0.4"
 log = "0.4"
-mcplease = "0.4"
+mcplease = "0.5"
 pathdiff = "0.2"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shellexpand = "3"
-size = "0.5"
+size = "0.6"
 tempfile = "3"
 timeago = "0.6"
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread"] }
+

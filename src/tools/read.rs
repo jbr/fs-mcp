@@ -14,7 +14,7 @@ use range::{LineRange, split_spec};
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, clap::Args)]
 #[serde(rename = "read")]
 pub struct Read {
-    /// Paths to read. Absolute, or relative to the session context path.
+    /// Paths to read. Absolute, or relative to the server's root directory.
     ///
     /// Each path may carry its own line range as a `:` suffix. Lines are
     /// 1-indexed and ranges are inclusive; a negative number counts back from
@@ -57,7 +57,7 @@ impl ToolMeta for Read {
     fn examples() -> Vec<Example<Self>> {
         vec![
             Example {
-                description: "Reading a file relative to a session context",
+                description: "Reading a file relative to the root directory",
                 item: Self {
                     paths: vec!["src/main.rs".into()],
                     max_length: None,
@@ -102,7 +102,13 @@ impl ToolMeta for Read {
 impl Tool<FsTools> for Read {
     type Output = String;
 
-    fn execute(self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
+    async fn execute(self, state: FsTools, _context: RequestContext) -> Result<String> {
+        state.unblock(move |state| self.run(state)).await
+    }
+}
+
+impl Read {
+    pub(crate) fn run(self, state: &FsTools) -> Result<String> {
         let separator = std::iter::repeat_with(fastrand::alphanumeric)
             .take(10)
             .collect::<String>();
@@ -151,14 +157,14 @@ impl Read {
     /// Existence is checked before the string is parsed, so a file whose name
     /// really does end in `:10-20` is read as itself; only a path that resolves
     /// to nothing is reconsidered as `path:range`.
-    fn locate(&self, state: &mut FsTools, requested: &str) -> Result<(PathBuf, Option<LineRange>)> {
-        let path = state.resolve_path(requested, None)?;
+    fn locate(&self, state: &FsTools, requested: &str) -> Result<(PathBuf, Option<LineRange>)> {
+        let path = state.resolve_path(requested);
         if path.exists() {
             return Ok((path, None));
         }
 
         if let Some((base, range)) = split_spec(requested) {
-            let base_path = state.resolve_path(base, None)?;
+            let base_path = state.resolve_path(base);
             if base_path.exists() {
                 return Ok((base_path, Some(range)));
             }
@@ -170,7 +176,7 @@ impl Read {
         Err(anyhow!("{} does not exist", path.display()))
     }
 
-    fn read_file(&self, state: &mut FsTools, requested: &str, separator: &str) -> Result<String> {
+    fn read_file(&self, state: &FsTools, requested: &str, separator: &str) -> Result<String> {
         let (path, range) = self.locate(state, requested)?;
 
         let full_contents = std::fs::read_to_string(&path)
@@ -254,15 +260,15 @@ mod test {
     use std::path::Path;
 
     fn tools(root: &Path) -> FsTools {
-        FsTools::embedded(root.to_path_buf()).unwrap()
+        FsTools::new(root.to_path_buf())
     }
 
-    fn call(state: &mut FsTools, path: &str, max_length: Option<usize>) -> String {
+    fn call(state: &FsTools, path: &str, max_length: Option<usize>) -> String {
         Read {
             paths: vec![path.into()],
             max_length,
         }
-        .execute(state, &RequestContext::default())
+        .run(state)
         .unwrap()
     }
 
@@ -279,7 +285,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let state = &mut tools(root);
+        let state = &tools(root);
         for spec in [
             "f.txt:5-6",
             "f.txt:5:6",
@@ -303,7 +309,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt:-3", None);
+        let out = call(&tools(root), "f.txt:-3", None);
         assert!(out.contains(", LINES: 8-10 "), "{out}");
         assert!(out.contains("8\tline 8"), "{out}");
         assert!(!out.contains("line 7"), "{out}");
@@ -316,7 +322,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt:-500", None);
+        let out = call(&tools(root), "f.txt:-500", None);
         assert!(out.contains(", LINES: 1-10 "), "{out}");
         assert!(out.contains("line 1") && out.contains("line 10"), "{out}");
     }
@@ -326,7 +332,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let state = &mut tools(root);
+        let state = &tools(root);
         let tail = call(state, "f.txt:8", None);
         assert!(tail.contains(", LINES: 8-10 "), "{tail}");
         let head = call(state, "f.txt:..2", None);
@@ -346,7 +352,7 @@ mod test {
             paths: vec!["f.txt:5-6".into(), "g.txt:-1".into(), "f.txt".into()],
             max_length: None,
         }
-        .execute(&mut tools(root), &RequestContext::default())
+        .run(&tools(root))
         .unwrap();
         assert!(out.contains(", LINES: 5-6 "), "{out}");
         assert!(out.contains(", LINES: 3-3 "), "{out}");
@@ -364,7 +370,7 @@ mod test {
         let root = dir.path();
         numbered(root);
         fs::write(root.join("f.txt:5-6"), "the literal file\n").unwrap();
-        let out = call(&mut tools(root), "f.txt:5-6", None);
+        let out = call(&tools(root), "f.txt:5-6", None);
         assert!(out.contains("the literal file"), "{out}");
         assert!(!out.contains("LINES:"), "{out}");
     }
@@ -377,7 +383,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt:8:3", None);
+        let out = call(&tools(root), "f.txt:8:3", None);
         assert!(out.contains("BEGIN ERROR"), "{out}");
         assert!(out.contains("If 3 was a column"), "{out}");
         assert!(out.contains("f.txt:8"), "{out}");
@@ -390,7 +396,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt:50-60", None);
+        let out = call(&tools(root), "f.txt:50-60", None);
         assert!(out.contains("BEGIN ERROR"), "{out}");
         assert!(out.contains("has 10 lines"), "{out}");
     }
@@ -401,7 +407,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt:9-60", None);
+        let out = call(&tools(root), "f.txt:9-60", None);
         assert!(out.contains(", LINES: 9-10 "), "{out}");
     }
 
@@ -411,7 +417,7 @@ mod test {
     fn a_missing_path_reports_the_file_without_its_range() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let out = call(&mut tools(root), "nope.txt:5-6", None);
+        let out = call(&tools(root), "nope.txt:5-6", None);
         assert!(out.contains("does not exist"), "{out}");
         assert!(!out.contains(":5-6 does not exist"), "{out}");
     }
@@ -425,7 +431,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt:5", Some(8));
+        let out = call(&tools(root), "f.txt:5", Some(8));
         assert!(out.contains("line 5"), "should start at the window: {out}");
         assert!(!out.contains("line 1\n"), "must not fall back to the head: {out}");
         assert!(out.contains("TRUNCATED"), "{out}");
@@ -437,7 +443,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt", Some(6));
+        let out = call(&tools(root), "f.txt", Some(6));
         assert!(out.contains("TRUNCATED"), "{out}");
         assert!(out.contains("line 1"), "{out}");
         assert!(!out.contains("line 3"), "{out}");
@@ -450,7 +456,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt:5-6", None);
+        let out = call(&tools(root), "f.txt:5-6", None);
         let begin = out.lines().next().unwrap();
         let path = begin.split(" BEGIN ").nth(1).unwrap().split(", BYTES:").next().unwrap();
         assert!(path.ends_with("f.txt"), "path field unchanged: {path:?}");
@@ -465,11 +471,11 @@ mod test {
         let root = dir.path();
         fs::write(root.join("with.txt"), "red\ngreen\n").unwrap();
         fs::write(root.join("without.txt"), "red\ngreen").unwrap();
-        let with = call(&mut tools(root), "with.txt", None);
+        let with = call(&tools(root), "with.txt", None);
         let body = with.split_once("==\n").unwrap().1;
         assert!(body.starts_with("red\ngreen\n=="), "{with}");
         assert!(with.contains(", BYTES: 10 "), "{with}");
-        let without = call(&mut tools(root), "without.txt", None);
+        let without = call(&tools(root), "without.txt", None);
         let body = without.split_once("==\n").unwrap().1;
         assert!(body.starts_with("red\ngreen\n=="), "{without}");
         assert!(without.contains(", BYTES: 9 "), "{without}");
@@ -483,9 +489,9 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt:5-6", None);
+        let out = call(&tools(root), "f.txt:5-6", None);
         assert!(out.contains("\n5\tline 5\n6\tline 6\n"), "{out}");
-        let capped = call(&mut tools(root), "f.txt:5-6", Some(8));
+        let capped = call(&tools(root), "f.txt:5-6", Some(8));
         assert!(capped.contains("TRUNCATED"), "{capped}");
         assert!(capped.contains("\n5\tline 5"), "{capped}");
     }
@@ -496,7 +502,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt:1-2", None);
+        let out = call(&tools(root), "f.txt:1-2", None);
         assert!(out.contains("\nline 1\nline 2\n"), "{out}");
         assert!(!out.contains("\t"), "{out}");
     }
@@ -507,7 +513,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         numbered(root);
-        let out = call(&mut tools(root), "f.txt", None);
+        let out = call(&tools(root), "f.txt", None);
         assert!(!out.contains("LINES:"), "{out}");
     }
 
@@ -520,7 +526,7 @@ mod test {
         let root = dir.path();
         fs::write(root.join("u.txt"), "héllo wörld — ünicode\n").unwrap();
         for cap in 1..=24 {
-            let out = call(&mut tools(root), "u.txt", Some(cap));
+            let out = call(&tools(root), "u.txt", Some(cap));
             assert!(out.contains("TRUNCATED"), "cap {cap}: {out}");
         }
     }

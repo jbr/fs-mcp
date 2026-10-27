@@ -25,8 +25,8 @@ mod test;
 #[serde(rename = "list")]
 pub struct List {
     /// Directory path or glob pattern.
-    /// Can be absolute, or relative to session context path. Can include wildcards like 'src/**/*'.
-    /// Defaults to the current session context if not provided
+    /// Can be absolute, or relative to the server's root directory. Can include wildcards like 'src/**/*'.
+    /// Defaults to the root directory if not provided
     pub path: Option<String>,
 
     /// Recurse into directories (only relevant if path does not contain a glob pattern)
@@ -96,11 +96,17 @@ impl ToolMeta for List {
 impl Tool<FsTools> for List {
     type Output = String;
 
-    fn execute(self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
+    async fn execute(self, state: FsTools, _context: RequestContext) -> Result<String> {
+        state.unblock(move |state| self.run(state)).await
+    }
+}
+
+impl List {
+    pub(crate) fn run(self, state: &FsTools) -> Result<String> {
         // Parse path to separate directory from glob pattern
         let (base_dir, pattern) = self.parse_path_and_pattern()?;
 
-        let base_path = state.resolve_path(base_dir, None)?;
+        let base_path = state.resolve_path(base_dir);
 
         if !base_path.is_dir() {
             return Err(anyhow!("Path is not a directory: {}", base_path.display()));
@@ -135,7 +141,7 @@ impl Tool<FsTools> for List {
 /// entry independently valid: `assets/**/*` answers `assets/themes/…`.
 ///
 /// A request that named no path (or named `.`) keeps bare relative entries — those
-/// already resolve against the session's working directory, which is what the next
+/// already resolve against the server's root directory, which is what the next
 /// call resolves against too.
 fn entry_prefix(base_dir: &str) -> String {
     let trimmed = base_dir.trim_end_matches('/');

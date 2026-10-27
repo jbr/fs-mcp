@@ -42,8 +42,8 @@ pub struct Search {
     pub pattern: Patterns,
 
     /// Paths to search. Each may be a file, a directory (searched recursively), or
-    /// a glob (`src/**/*.rs`). Absolute, or relative to the session context path.
-    /// Defaults to the session context path.
+    /// a glob (`src/**/*.rs`). Absolute, or relative to the server's root directory.
+    /// Defaults to the root directory.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
 
@@ -226,7 +226,13 @@ impl Default for Search {
 impl Tool<FsTools> for Search {
     type Output = String;
 
-    fn execute(self, state: &mut FsTools, _context: &RequestContext) -> Result<String> {
+    async fn execute(self, state: FsTools, _context: RequestContext) -> Result<String> {
+        state.unblock(move |state| self.run(state)).await
+    }
+}
+
+impl Search {
+    pub(crate) fn run(self, state: &FsTools) -> Result<String> {
         let matcher = RegexMatcherBuilder::new()
             .case_insensitive(!self.case_sensitive())
             .build(&self.pattern.to_regex())
@@ -283,7 +289,7 @@ impl Search {
     /// and a quarter named more than one operand, so the plural is the common
     /// case, not the exotic one. Order follows the request; a file reachable from
     /// two requested paths is searched once.
-    fn collect_targets(&self, state: &mut FsTools) -> Result<Targets> {
+    fn collect_targets(&self, state: &FsTools) -> Result<Targets> {
         let include = compile_globs(self.include_globs.as_deref())?;
         let exclude = compile_globs(self.exclude_globs.as_deref())?;
 
@@ -298,7 +304,7 @@ impl Search {
 
         for request in &requested {
             let (base, pattern) = split_glob(request);
-            let base_path = state.resolve_path(if base.is_empty() { "." } else { base }, None)?;
+            let base_path = state.resolve_path(if base.is_empty() { "." } else { base });
             let glob = pattern.map(compile_glob).transpose()?;
 
             if !base_path.exists() {
@@ -843,7 +849,7 @@ mod tests {
     use std::fs;
 
     fn tools(root: &Path) -> FsTools {
-        FsTools::embedded(root.to_path_buf()).unwrap()
+        FsTools::new(root.to_path_buf())
     }
 
     fn search_for(pattern: &str) -> Search {
@@ -859,7 +865,7 @@ mod tests {
 
     fn run(search: Search, root: &Path) -> String {
         search
-            .execute(&mut tools(root), &RequestContext::default())
+            .run(&tools(root))
             .unwrap()
     }
 
